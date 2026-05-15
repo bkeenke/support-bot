@@ -3,7 +3,7 @@ from contextlib import suppress
 from aiogram import Router, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, MagicData
-from aiogram.types import Message
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.markdown import hcode, hbold
 
 from app.bot.manager import Manager
@@ -92,9 +92,17 @@ async def handler(message: Message, manager: Manager, redis: RedisStorage) -> No
 
     format_data = user_data.to_dict()
     format_data["full_name"] = hbold(format_data["full_name"])
+    # Добавляем URL из конфигурации
+    format_data["SHM_API_URL"] = manager.config.bot.SHM_API_URL
     text = manager.text_message.get("user_information")
+
+    shm_url = f"{manager.config.bot.SHM_API_URL}{user_data.id}"
+    markup = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="👤 SHM Info", url=shm_url)
+    ]]) if manager.config.bot.SHM_API_URL else None
+
     # Reply with formatted user information
-    await message.reply(text.format_map(format_data))
+    await message.reply(text.format_map(format_data), reply_markup=markup)
 
 
 @router.message(Command(commands=["ban"]))

@@ -1,16 +1,22 @@
 import asyncio
+import logging
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
+from aiohttp_socks import ProxyConnector
 from apscheduler.jobstores.redis import RedisJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from .bot import commands
 from .bot.handlers import include_routers
 from .bot.middlewares import register_middlewares
+from .bot.utils.texts import load_faq_text
 from .config import load_config, Config
+
+logger = logging.getLogger(__name__)
 from .logger import setup_logger
 
 
@@ -51,6 +57,9 @@ async def on_startup(
     """
     # Start apscheduler
     apscheduler.start()
+    # Load FAQ text from URL if configured
+    if config.faq_url:
+        await load_faq_text(config.faq_url, proxy=config.proxy)
     # Setup commands when starting up
     await commands.setup(bot, config)
 
@@ -78,11 +87,24 @@ async def main() -> None:
     )
 
     # Create Bot and Dispatcher instances
+    logger.info("Starting bot... proxy=%s", config.proxy or "none")
+
+    _timeout = 15
+    if config.proxy:
+        if config.proxy.startswith("socks"):
+            connector = ProxyConnector.from_url(config.proxy)
+            session = AiohttpSession(connector=connector, timeout=_timeout)
+        else:
+            session = AiohttpSession(proxy=config.proxy, timeout=_timeout)
+    else:
+        session = AiohttpSession(timeout=_timeout)
+
     bot = Bot(
         token=config.bot.TOKEN,
         default=DefaultBotProperties(
             parse_mode=ParseMode.HTML,
         ),
+        session=session,
     )
     dp = Dispatcher(
         apscheduler=apscheduler,
@@ -104,7 +126,10 @@ async def main() -> None:
     )
 
     # Start the bot
-    await bot.delete_webhook()
+    logger.info("Connecting to Telegram API...")
+    await bot.delete_webhook(request_timeout=15)
+    me = await bot.get_me(request_timeout=15)
+    logger.info("Bot started: @%s (id=%d)", me.username, me.id)
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 

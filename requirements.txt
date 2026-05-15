@@ -1,5 +1,6 @@
 aiogram==3.7.0
 aiogram-newsletter>=0.0.10
+aiohttp-socks>=0.7.1
 cachetools==5.3.2
 environs==14.1.1
 pydantic==2.5.3

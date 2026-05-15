@@ -13,11 +13,13 @@ class BotConfig:
     - DEV_ID (int): The developer's user ID.
     - GROUP_ID (int): The group chat ID.
     - BOT_EMOJI_ID (str): The custom emoji ID for the group's topic.
+    - SHM_API_URL (str): Base URL for SHM user info page.
     """
     TOKEN: str
     DEV_ID: int
     GROUP_ID: int
     BOT_EMOJI_ID: str
+    SHM_API_URL: str
 
 
 @dataclass
@@ -51,9 +53,13 @@ class Config:
     Attributes:
     - bot (BotConfig): The bot configuration.
     - redis (RedisConfig): The Redis configuration.
+    - proxy (str | None): Optional SOCKS5/HTTP proxy URL.
+    - faq_url (str | None): Optional URL to fetch FAQ HTML text.
     """
     bot: BotConfig
     redis: RedisConfig
+    proxy: str | None
+    faq_url: str | None
 
 
 def load_config() -> Config:
@@ -71,10 +77,13 @@ def load_config() -> Config:
             DEV_ID=env.int("BOT_DEV_ID"),
             GROUP_ID=env.int("BOT_GROUP_ID"),
             BOT_EMOJI_ID=env.str("BOT_EMOJI_ID"),
+            SHM_API_URL=env.str("SHM_API_URL", default=""),
         ),
         redis=RedisConfig(
             HOST=env.str("REDIS_HOST"),
             PORT=env.int("REDIS_PORT"),
             DB=env.int("REDIS_DB"),
         ),
+        proxy=env.str("PROXY_URL", default=None) or None,
+        faq_url=env.str("FAQ_TEXT_URL", default=None) or None,
     )
