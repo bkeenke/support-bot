@@ -58,8 +58,10 @@ async def on_startup(
     # Start apscheduler
     apscheduler.start()
     # Load FAQ text from URL if configured
-    if config.faq_url:
-        await load_faq_text(config.faq_url, proxy=config.proxy)
+    if config.faq_ru_url:
+        await load_faq_text("ru", config.faq_ru_url, proxy=config.proxy)
+    if config.faq_en_url:
+        await load_faq_text("en", config.faq_en_url, proxy=config.proxy)
     # Setup commands when starting up
     await commands.setup(bot, config)
 

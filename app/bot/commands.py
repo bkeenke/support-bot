@@ -52,27 +52,30 @@ async def setup(bot: Bot, config: Config) -> None:
 
     admin_commands = {
         "en":
-            commands["en"].copy() +
-            [BotCommand(command="newsletter", description="Newsletter menu")],
+            commands["en"].copy() + [
+                BotCommand(command="newsletter", description="Newsletter menu"),
+                BotCommand(command="reload_faq", description="Reload FAQ cache"),
+            ],
         "ru":
-            commands["ru"].copy() +
-            [BotCommand(command="newsletter", description="Меню рассылки")],
+            commands["ru"].copy() + [
+                BotCommand(command="newsletter", description="Меню рассылки"),
+                BotCommand(command="reload_faq", description="Сбросить кеш FAQ"),
+            ],
     }
 
-    try:
-        # Set commands for dev or admin in English language
-        await bot.set_my_commands(
-            commands=admin_commands["en"],
-            scope=BotCommandScopeChat(chat_id=config.bot.DEV_ID),
-        )
-        # Set commands for dev or admin in Russian language
-        await bot.set_my_commands(
-            commands=admin_commands["ru"],
-            scope=BotCommandScopeChat(chat_id=config.bot.DEV_ID),
-            language_code="ru",
-        )
-    except TelegramBadRequest:
-        raise ValueError(f"Chat with DEV_ID {config.bot.DEV_ID} not found.")
+    for dev_id in [config.bot.DEV_ID] + config.bot.DEV_IDS:
+        try:
+            await bot.set_my_commands(
+                commands=admin_commands["en"],
+                scope=BotCommandScopeChat(chat_id=dev_id),
+            )
+            await bot.set_my_commands(
+                commands=admin_commands["ru"],
+                scope=BotCommandScopeChat(chat_id=dev_id),
+                language_code="ru",
+            )
+        except TelegramBadRequest:
+            raise ValueError(f"Chat with DEV_ID {dev_id} not found.")
 
     # Set commands for all private chats in English language
     await bot.set_my_commands(
@@ -106,18 +109,17 @@ async def delete(bot: Bot, config: Config) -> None:
     :param bot: The Bot object.
     """
 
-    try:
-        # Delete commands for dev or admin in any language
-        await bot.delete_my_commands(
-            scope=BotCommandScopeChat(chat_id=config.bot.DEV_ID),
-        )
-        # Delete commands for dev or admin in Russian language
-        await bot.delete_my_commands(
-            scope=BotCommandScopeChat(chat_id=config.bot.DEV_ID),
-            language_code="ru",
-        )
-    except TelegramBadRequest:
-        raise ValueError(f"Chat with DEV_ID {config.bot.DEV_ID} not found.")
+    for dev_id in [config.bot.DEV_ID] + config.bot.DEV_IDS:
+        try:
+            await bot.delete_my_commands(
+                scope=BotCommandScopeChat(chat_id=dev_id),
+            )
+            await bot.delete_my_commands(
+                scope=BotCommandScopeChat(chat_id=dev_id),
+                language_code="ru",
+            )
+        except TelegramBadRequest:
+            raise ValueError(f"Chat with DEV_ID {dev_id} not found.")
 
     # Delete commands for all private chats in any language
     await bot.delete_my_commands(

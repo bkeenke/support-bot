@@ -38,8 +38,32 @@ async def handle_chat_member_update(
 
     url = f"https://t.me/{user_data.username[1:]}" if user_data.username != "-" else f"tg://user?id={user_data.id}"
 
-    await update.bot.send_message(
-        chat_id=manager.config.bot.GROUP_ID,
-        text=text.format(name=hlink(user_data.full_name, url)),
-        message_thread_id=user_data.message_thread_id,
-    )
+    try:
+        await update.bot.send_message(
+            chat_id=manager.config.bot.GROUP_ID,
+            text=text.format(name=hlink(user_data.full_name, url)),
+            message_thread_id=user_data.message_thread_id,
+        )
+    except Exception as ex:
+        from aiogram.exceptions import TelegramBadRequest
+        from app.bot.utils.create_forum_topic import create_forum_topic
+
+        # If topic was deleted, recreate it
+        if isinstance(ex, TelegramBadRequest) and "message thread not found" in ex.message.lower():
+            try:
+                user_data.message_thread_id = await create_forum_topic(
+                    update.bot,
+                    manager.config,
+                    user_data.full_name,
+                )
+                await redis.update_user(user_data.id, user_data)
+
+                await update.bot.send_message(
+                    chat_id=manager.config.bot.GROUP_ID,
+                    text=text.format(name=hlink(user_data.full_name, url)),
+                    message_thread_id=user_data.message_thread_id,
+                )
+            except Exception:
+                raise ex
+        else:
+            raise

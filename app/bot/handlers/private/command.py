@@ -8,6 +8,7 @@ from app.bot.manager import Manager
 from app.bot.utils.create_forum_topic import get_or_create_forum_topic
 from app.bot.utils.redis import RedisStorage
 from app.bot.utils.redis.models import UserData
+from app.bot.utils.texts import clear_faq_cache, load_faq_text
 
 router = Router()
 router.message.filter(F.chat.type == "private")
@@ -77,8 +78,31 @@ async def handler(message: Message, manager: Manager) -> None:
 
 
 @router.message(
+    Command("reload_faq"),
+    MagicData(
+        (F.event_from_user.id == F.config.bot.DEV_ID) |
+        F.event_from_user.id.in_(F.config.bot.DEV_IDS)
+    ),
+)
+async def handler(message: Message, manager: Manager) -> None:
+    if not manager.config.faq_ru_url and not manager.config.faq_en_url:
+        await message.answer("FAQ_TEXT_URL and FAQ_EN_TEXT_URL are not configured.")
+        return
+    clear_faq_cache()
+    if manager.config.faq_ru_url:
+        await load_faq_text("ru", manager.config.faq_ru_url, proxy=manager.config.proxy)
+    if manager.config.faq_en_url:
+        await load_faq_text("en", manager.config.faq_en_url, proxy=manager.config.proxy)
+    await message.answer("FAQ cache reloaded.")
+    await manager.delete_message(message)
+
+
+@router.message(
     Command("newsletter"),
-    MagicData(F.event_from_user.id == F.config.bot.DEV_ID),  # type: ignore
+    MagicData(
+        (F.event_from_user.id == F.config.bot.DEV_ID) |
+        F.event_from_user.id.in_(F.config.bot.DEV_IDS)
+    ),
 )
 async def handler(
         message: Message,

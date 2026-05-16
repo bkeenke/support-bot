@@ -11,12 +11,14 @@ class BotConfig:
     Attributes:
     - TOKEN (str): The bot token.
     - DEV_ID (int): The developer's user ID.
+    - DEV_IDS (list[int]): Additional developer user IDs.
     - GROUP_ID (int): The group chat ID.
     - BOT_EMOJI_ID (str): The custom emoji ID for the group's topic.
     - SHM_API_URL (str): Base URL for SHM user info page.
     """
     TOKEN: str
     DEV_ID: int
+    DEV_IDS: list[int]
     GROUP_ID: int
     BOT_EMOJI_ID: str
     SHM_API_URL: str
@@ -54,12 +56,14 @@ class Config:
     - bot (BotConfig): The bot configuration.
     - redis (RedisConfig): The Redis configuration.
     - proxy (str | None): Optional SOCKS5/HTTP proxy URL.
-    - faq_url (str | None): Optional URL to fetch FAQ HTML text.
+    - faq_ru_url (str | None): Optional URL to fetch FAQ HTML text in Russian.
+    - faq_en_url (str | None): Optional URL to fetch FAQ HTML text in English.
     """
     bot: BotConfig
     redis: RedisConfig
     proxy: str | None
-    faq_url: str | None
+    faq_ru_url: str | None
+    faq_en_url: str | None
 
 
 def load_config() -> Config:
@@ -75,6 +79,7 @@ def load_config() -> Config:
         bot=BotConfig(
             TOKEN=env.str("BOT_TOKEN"),
             DEV_ID=env.int("BOT_DEV_ID"),
+            DEV_IDS=env.list("BOT_DEV_IDS", subcast=int, default=[]),
             GROUP_ID=env.int("BOT_GROUP_ID"),
             BOT_EMOJI_ID=env.str("BOT_EMOJI_ID"),
             SHM_API_URL=env.str("SHM_API_URL", default=""),
@@ -85,5 +90,6 @@ def load_config() -> Config:
             DB=env.int("REDIS_DB"),
         ),
         proxy=env.str("PROXY_URL", default=None) or None,
-        faq_url=env.str("FAQ_TEXT_URL", default=None) or None,
+        faq_ru_url=env.str("FAQ_TEXT_URL", default=None) or None,
+        faq_en_url=env.str("FAQ_EN_TEXT_URL", default=None) or None,
     )

@@ -1,7 +1,8 @@
 import asyncio
+import logging
 
 from aiogram import Router, F
-from aiogram.exceptions import TelegramBadRequest
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.types import Message
 
@@ -13,6 +14,8 @@ from app.bot.utils.create_forum_topic import (
 )
 from app.bot.utils.redis import RedisStorage
 from app.bot.utils.redis.models import UserData
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 router.message.filter(F.chat.type == "private", StateFilter(None))
@@ -61,18 +64,11 @@ async def handle_incoming_message(
     if user_data.is_banned:
         return
 
-    async def copy_message_to_topic():
+    async def copy_message_to_topic(message_thread_id: int) -> None:
         """
         Copies the message or album to the forum topic.
         If no album is provided, the message is copied. Otherwise, the album is copied.
         """
-        message_thread_id = await get_or_create_forum_topic(
-            message.bot,
-            redis,
-            manager.config,
-            user_data,
-        )
-
         if not album:
             await message.forward(
                 chat_id=manager.config.bot.GROUP_ID,
@@ -84,18 +80,42 @@ async def handle_incoming_message(
                 message_thread_id=message_thread_id,
             )
 
-    try:
-        await copy_message_to_topic()
-    except TelegramBadRequest as ex:
-        if "message thread not found" in ex.message:
-            user_data.message_thread_id = await create_forum_topic(
-                message.bot,
-                manager.config,
-                user_data.full_name,
+    for attempt in range(2):
+        message_thread_id = await get_or_create_forum_topic(
+            message.bot,
+            redis,
+            manager.config,
+            user_data,
+        )
+        try:
+            await copy_message_to_topic(message_thread_id)
+            break
+        except TelegramBadRequest as ex:
+            error_msg = str(ex).lower()
+            logger.warning(
+                "Send to topic failed (user=%s, thread=%s, attempt=%s): %s",
+                user_data.id,
+                message_thread_id,
+                attempt + 1,
+                ex,
             )
-            await redis.update_user(user_data.id, user_data)
-            await copy_message_to_topic()
-        else:
+            # Telegram may return different texts for deleted/invalid topics.
+            if (
+                "message thread" in error_msg
+                or "topic" in error_msg
+                or "forum" in error_msg
+            ) and attempt == 0:
+                user_data.message_thread_id = None
+                await redis.update_user(user_data.id, user_data)
+                continue
+            raise
+        except TelegramAPIError as ex:
+            logger.error(
+                "Telegram API error while forwarding (user=%s, thread=%s): %s",
+                user_data.id,
+                message_thread_id,
+                ex,
+            )
             raise
 
     # Send a confirmation message to the user

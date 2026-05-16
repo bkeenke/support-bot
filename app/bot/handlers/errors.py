@@ -34,10 +34,8 @@ async def not_enough_rights_error(event: ErrorEvent, manager: Manager) -> None:
     """
     logging.exception(f'Update: {event.update}\nException: {event.exception}')
     print(event.exception.args)
-    await manager.bot.send_message(
-        manager.config.bot.DEV_ID,
-        NotEnoughRightsException.message,
-    )
+    for dev_id in [manager.config.bot.DEV_ID] + manager.config.bot.DEV_IDS:
+        await manager.bot.send_message(dev_id, NotEnoughRightsException.message)
 
 
 @router.errors(ExceptionTypeFilter(CreateForumTopicException))
@@ -51,10 +49,8 @@ async def create_forum_topic_error(event: ErrorEvent, manager: Manager) -> None:
     """
     logging.exception(f'Update: {event.update}\nException: {event.exception}')
 
-    await manager.bot.send_message(
-        manager.config.bot.DEV_ID,
-        CreateForumTopicException.message,
-    )
+    for dev_id in [manager.config.bot.DEV_ID] + manager.config.bot.DEV_IDS:
+        await manager.bot.send_message(dev_id, CreateForumTopicException.message)
 
 
 @router.errors()
@@ -78,9 +74,9 @@ async def telegram_api_error(event: ErrorEvent, manager: Manager) -> None:
 
     document = BufferedInputFile(document_data, filename=document_name)
     caption = f'{hbold(exc_name)}:\n{hcode(exc_text[:1024 - len(exc_name) - 2])}'
-    message = await manager.bot.send_document(manager.config.bot.DEV_ID, document, caption=caption)
-
-    # Send update_json in chunks
-    for text in [update_json[i:i + 4096] for i in range(0, len(update_json), 4096)]:
-        await asyncio.sleep(.1)
-        await message.reply(hcode(text))
+    chunks = [update_json[i:i + 4096] for i in range(0, len(update_json), 4096)]
+    for dev_id in [manager.config.bot.DEV_ID] + manager.config.bot.DEV_IDS:
+        sent = await manager.bot.send_document(dev_id, document, caption=caption)
+        for text in chunks:
+            await asyncio.sleep(.1)
+            await sent.reply(hcode(text))
