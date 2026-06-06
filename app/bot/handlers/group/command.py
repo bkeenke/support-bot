@@ -96,9 +96,14 @@ async def handler(message: Message, manager: Manager, redis: RedisStorage) -> No
     format_data["SHM_API_URL"] = manager.config.bot.SHM_API_URL
     text = manager.text_message.get("user_information")
 
-    shm_url = f"{manager.config.bot.SHM_API_URL}{user_data.id}"
+    if user_data.email:
+        shm_url = f"{manager.config.bot.SHM_API_URL}&q={user_data.email}"
+        shm_url_text = "👤 SHM Info (email)"
+    else:
+        shm_url = f"{manager.config.bot.SHM_API_URL}&tgID={user_data.id}"
+        shm_url_text = "👤 SHM Info (tgID)"
     markup = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="👤 SHM Info", url=shm_url)
+        InlineKeyboardButton(text=shm_url_text, url=shm_url)
     ]]) if manager.config.bot.SHM_API_URL else None
 
     # Reply with formatted user information

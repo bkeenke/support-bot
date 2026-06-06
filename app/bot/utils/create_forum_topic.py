@@ -34,6 +34,16 @@ def _sanitize_topic_name(name: str) -> str:
     return name or "User"
 
 
+def _build_topic_name(full_name: str | None, user_id: int) -> str:
+    raw_name = (full_name or "").strip()[:128]
+    sanitized_name = _sanitize_topic_name(raw_name)
+
+    if sanitized_name == "User" and raw_name:
+        return f"User {user_id}"[:128]
+
+    return sanitized_name
+
+
 async def _is_topic_valid(bot: Bot, config: Config, message_thread_id: int) -> bool:
     """
     Validate that a forum topic still exists.
@@ -91,7 +101,7 @@ async def get_or_create_forum_topic(
     if user_data.message_thread_id is None:
         try:
             # If message_thread_id is not found, create a forum topic
-            name = (user_data.full_name or "User").strip()[:128] or "User"
+            name = _build_topic_name(user_data.full_name, user_data.id)
             message_thread_id = await create_forum_topic(bot, config, name)
             if message_thread_id is None:
                 raise CreateForumTopicException
@@ -100,7 +110,11 @@ async def get_or_create_forum_topic(
 
         except Exception as e:
             for dev_id in [config.bot.DEV_ID] + config.bot.DEV_IDS:
-                await bot.send_message(dev_id, f"[create_forum_topic] user_id={user_data.id} name={user_data.full_name!r}\n{e}")
+                cause = e.__cause__ if e.__cause__ else e
+                await bot.send_message(
+                    dev_id,
+                    f"[create_forum_topic] chat_id={config.bot.GROUP_ID} user_id={user_data.id} name={user_data.full_name!r}\n{cause}",
+                )
             logging.exception(e)
             raise
 

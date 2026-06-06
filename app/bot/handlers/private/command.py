@@ -1,5 +1,9 @@
+import base64
+import logging
+import re
+
 from aiogram import Router, F
-from aiogram.filters import Command, MagicData
+from aiogram.filters import CommandObject, CommandStart, Command, MagicData
 from aiogram.types import Message
 from aiogram_newsletter.manager import ANManager
 
@@ -10,13 +14,30 @@ from app.bot.utils.redis import RedisStorage
 from app.bot.utils.redis.models import UserData
 from app.bot.utils.texts import clear_faq_cache, load_faq_text
 
+logger = logging.getLogger(__name__)
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _decode_start_email(arg: str | None) -> str | None:
+    if not arg:
+        return None
+    try:
+        padded = arg + "=" * (-len(arg) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return decoded if _EMAIL_RE.match(decoded) else None
+
 router = Router()
 router.message.filter(F.chat.type == "private")
 
 
+@router.message(CommandStart(deep_link=True))
 @router.message(Command("start"))
 async def handler(
         message: Message,
+        command: CommandObject,
         manager: Manager,
         redis: RedisStorage,
         user_data: UserData,
@@ -27,12 +48,15 @@ async def handler(
     If the user has already selected a language, displays the main menu window.
     Otherwise, prompts the user to select a language.
 
-    :param message: Message object.
-    :param manager: Manager object.
-    :param redis: RedisStorage object.
-    :param user_data: UserData object.
-    :return: None
+    Supports deep-link payload `?start=<base64url(email)>` — decodes and stores
+    the email on the user record so it can later be appended to SHM_API_URL.
     """
+    email = _decode_start_email(command.args)
+    if email and user_data.email != email:
+        user_data.email = email
+        await redis.update_user(user_data.id, user_data)
+        logger.info("Linked email %s to user %s via deep-link", email, user_data.id)
+
     if user_data.language_code:
         await Window.main_menu(manager)
     else:

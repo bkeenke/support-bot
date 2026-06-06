@@ -15,6 +15,7 @@ class UserData:
     state: str = "member"
     is_banned: bool = False
     language_code: str | None = None
+    email: str | None = None
     created_at: str = datetime.now(timezone(timedelta(hours=3))).strftime("%Y-%m-%d %H:%M:%S %Z")
 
     def to_dict(self) -> dict:
