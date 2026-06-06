@@ -44,6 +44,9 @@ def _build_topic_name(full_name: str | None, user_id: int) -> str:
     return sanitized_name
 
 
+_TOPIC_VALID_TTL = 6 * 3600  # probe at most once per 6 hours per topic
+
+
 async def _is_topic_valid(bot: Bot, config: Config, message_thread_id: int) -> bool:
     """
     Validate that a forum topic still exists.
@@ -54,6 +57,13 @@ async def _is_topic_valid(bot: Bot, config: Config, message_thread_id: int) -> b
         await bot.reopen_forum_topic(
             chat_id=config.bot.GROUP_ID,
             message_thread_id=message_thread_id,
+        )
+        return True
+    except TelegramRetryAfter as ex:
+        # Rate limited — assume topic is alive to avoid dropping the message.
+        logging.warning(
+            "Rate limited probing topic %s, assuming valid (retry_after=%s)",
+            message_thread_id, ex.retry_after,
         )
         return True
     except TelegramBadRequest as ex:
@@ -88,15 +98,22 @@ async def get_or_create_forum_topic(
         user_data: UserData,
 ) -> int:
     if user_data.message_thread_id is not None:
-        is_valid = await _is_topic_valid(bot, config, user_data.message_thread_id)
-        if not is_valid:
-            logging.warning(
-                "Stored forum topic is invalid, resetting (user=%s, thread=%s)",
-                user_data.id,
-                user_data.message_thread_id,
-            )
-            user_data.message_thread_id = None
-            await redis.update_user(user_data.id, user_data)
+        # Only probe Telegram if we haven't confirmed this topic recently.
+        cache_key = f"topic_valid:{user_data.message_thread_id}"
+        cached = await redis.redis.get(cache_key)
+
+        if cached is None:
+            is_valid = await _is_topic_valid(bot, config, user_data.message_thread_id)
+            if is_valid:
+                await redis.redis.setex(cache_key, _TOPIC_VALID_TTL, "1")
+            else:
+                logging.warning(
+                    "Stored forum topic is invalid, resetting (user=%s, thread=%s)",
+                    user_data.id,
+                    user_data.message_thread_id,
+                )
+                user_data.message_thread_id = None
+                await redis.update_user(user_data.id, user_data)
 
     if user_data.message_thread_id is None:
         try:
@@ -107,6 +124,10 @@ async def get_or_create_forum_topic(
                 raise CreateForumTopicException
             user_data.message_thread_id = message_thread_id
             await redis.update_user(user_data.id, user_data)
+            # Cache the freshly created topic as valid.
+            await redis.redis.setex(
+                f"topic_valid:{message_thread_id}", _TOPIC_VALID_TTL, "1"
+            )
 
         except Exception as e:
             for dev_id in [config.bot.DEV_ID] + config.bot.DEV_IDS:

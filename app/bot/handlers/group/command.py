@@ -88,7 +88,36 @@ async def handler(message: Message, manager: Manager, redis: RedisStorage) -> No
     :return: None
     """
     user_data = await redis.get_by_message_thread_id(message.message_thread_id)
-    if not user_data: return None  # noqa
+
+    if not user_data:
+        # Web widget session topic
+        session_id = await redis.get_session_id_by_thread(message.message_thread_id)
+        if not session_id:
+            return
+        session = await redis.get_web_session(session_id)
+        if not session:
+            return
+        lines = [
+            "<b>Тип:</b> Web Widget",
+            f"<b>SHM User ID:</b> <code>{session.external_id}</code>",
+        ]
+        if session.full_name:
+            lines.append(f"<b>Имя:</b> {hbold(session.full_name)}")
+        if session.login:
+            lines.append(f"<b>Логин:</b> {session.login}")
+        lines.append(f"<b>Дата создания:</b> {session.created_at}")
+        text = "\n".join(lines)
+
+        markup = None
+        if manager.config.bot.SHM_API_URL:
+            markup = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(
+                    text="👤 SHM Info",
+                    url=f"{manager.config.bot.SHM_API_URL}&q={session.external_id}",
+                )
+            ]])
+        await message.reply(text, reply_markup=markup)
+        return
 
     format_data = user_data.to_dict()
     format_data["full_name"] = hbold(format_data["full_name"])

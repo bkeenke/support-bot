@@ -2,7 +2,7 @@ import json
 
 from redis.asyncio import Redis
 
-from .models import UserData
+from .models import UserData, WebSession
 
 
 class RedisStorage:
@@ -105,3 +105,47 @@ class RedisStorage:
         async with self.redis.client() as client:
             user_ids = await client.hkeys(self.NAME)
             return [int(user_id) for user_id in user_ids]
+
+    # ------------------------------------------------------------------
+    # Web widget session methods
+    # ------------------------------------------------------------------
+
+    async def get_web_session(self, session_id: str) -> WebSession | None:
+        data = await self.redis.get(f"web_session:{session_id}")
+        if data:
+            return WebSession(**json.loads(data))
+        return None
+
+    async def get_web_session_by_user_id(self, user_id: int) -> WebSession | None:
+        sid = await self.redis.get(f"web_user:{user_id}")
+        return await self.get_web_session(sid.decode()) if sid else None
+
+    async def get_web_session_by_guest_id(self, guest_id: str) -> WebSession | None:
+        sid = await self.redis.get(f"web_guest:{guest_id}")
+        return await self.get_web_session(sid.decode()) if sid else None
+
+    async def create_web_session(self, session: WebSession) -> None:
+        await self.redis.set(f"web_session:{session.session_id}", json.dumps(session.to_dict()))
+        if session.type == "user":
+            await self.redis.set(f"web_user:{session.external_id}", session.session_id)
+        else:
+            await self.redis.set(f"web_guest:{session.external_id}", session.session_id)
+
+    async def update_web_session(self, session: WebSession) -> None:
+        await self.redis.set(f"web_session:{session.session_id}", json.dumps(session.to_dict()))
+        if session.thread_id:
+            await self.redis.set(f"web_thread:{session.thread_id}", session.session_id)
+
+    async def get_session_id_by_thread(self, thread_id: int) -> str | None:
+        sid = await self.redis.get(f"web_thread:{thread_id}")
+        return sid.decode() if sid else None
+
+    async def push_web_inbox(self, session_id: str, message: dict) -> None:
+        await self.redis.rpush(f"web_inbox:{session_id}", json.dumps(message))
+
+    async def get_web_inbox(self, session_id: str, offset: int = 0) -> list[dict]:
+        raw = await self.redis.lrange(f"web_inbox:{session_id}", offset, -1)
+        return [json.loads(item) for item in raw]
+
+    async def get_web_inbox_len(self, session_id: str) -> int:
+        return await self.redis.llen(f"web_inbox:{session_id}")

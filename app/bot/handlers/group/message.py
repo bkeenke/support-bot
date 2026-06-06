@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Optional
 
 from aiogram import Router, F
@@ -52,6 +53,23 @@ async def handler(message: Message) -> None:
     await message.delete()
 
 
+async def _push_to_web_inbox(redis: RedisStorage, session_id: str, message: Message) -> None:
+    entry: dict = {"ts": int(time.time()), "from": "support"}
+
+    if message.text:
+        entry["text"] = message.text
+    elif message.caption:
+        entry["text"] = message.caption
+
+    if message.photo:
+        entry["photo_file_id"] = message.photo[-1].file_id
+    elif message.document:
+        entry["doc_file_id"] = message.document.file_id
+        entry["file_name"] = message.document.file_name
+
+    await redis.push_web_inbox(session_id, entry)
+
+
 @router.message(F.media_group_id, F.from_user[F.is_bot.is_(False)])
 @router.message(F.media_group_id.is_(None), F.from_user[F.is_bot.is_(False)])
 async def handler(message: Message, manager: Manager, redis: RedisStorage, album: Optional[Album] = None) -> None:
@@ -65,6 +83,12 @@ async def handler(message: Message, manager: Manager, redis: RedisStorage, album
     :param album: Album object or None.
     :return: None
     """
+    # Web widget session — push reply to inbox instead of forwarding to Telegram
+    session_id = await redis.get_session_id_by_thread(message.message_thread_id)
+    if session_id:
+        await _push_to_web_inbox(redis, session_id, message)
+        return
+
     user_data = await redis.get_by_message_thread_id(message.message_thread_id)
     if not user_data: return None  # noqa
 

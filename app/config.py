@@ -1,6 +1,15 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from environs import Env
+
+
+@dataclass
+class ApiConfig:
+    HOST: str
+    PORT: int
+    CORS_ORIGINS: list[str]
+    GET_ID_URL: str | None
+    GET_DATA_URL: str | None
 
 
 @dataclass
@@ -55,12 +64,14 @@ class Config:
     Attributes:
     - bot (BotConfig): The bot configuration.
     - redis (RedisConfig): The Redis configuration.
+    - api (ApiConfig): The widget HTTP API configuration.
     - proxy (str | None): Optional SOCKS5/HTTP proxy URL.
     - faq_ru_url (str | None): Optional URL to fetch FAQ HTML text in Russian.
     - faq_en_url (str | None): Optional URL to fetch FAQ HTML text in English.
     """
     bot: BotConfig
     redis: RedisConfig
+    api: ApiConfig
     proxy: str | None
     faq_ru_url: str | None
     faq_en_url: str | None
@@ -88,6 +99,13 @@ def load_config() -> Config:
             HOST=env.str("REDIS_HOST"),
             PORT=env.int("REDIS_PORT"),
             DB=env.int("REDIS_DB"),
+        ),
+        api=ApiConfig(
+            HOST=env.str("WIDGET_API_HOST", default="0.0.0.0"),
+            PORT=env.int("WIDGET_API_PORT", default=8080),
+            CORS_ORIGINS=[o for o in env.list("WIDGET_CORS_ORIGINS", default=[]) if o.strip()],
+            GET_ID_URL=env.str("GET_ID_URL", default=None) or None,
+            GET_DATA_URL=env.str("GET_DATA_URL", default=None) or None,
         ),
         proxy=env.str("PROXY_URL", default=None) or None,
         faq_ru_url=env.str("FAQ_TEXT_URL", default=None) or None,

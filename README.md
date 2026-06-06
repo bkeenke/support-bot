@@ -1,4 +1,4 @@
-# 🤖 Support Bot
+# Support Bot
 
 [![License](https://img.shields.io/github/license/tonmendon/ton-subdomain)](https://github.com/tonmendon/ton-subdomain/blob/main/LICENSE)
 [![Telegram Bot](https://img.shields.io/badge/Bot-grey?logo=telegram)](https://core.telegram.org/bots)
@@ -6,121 +6,220 @@
 [![Redis](https://img.shields.io/badge/Redis-Yes?logo=redis&color=white)](https://redis.io/)
 [![Docker](https://img.shields.io/badge/Docker-blue?logo=docker&logoColor=white)](https://www.docker.com/)
 
-**Support Bot** is a specially designed Telegram bot for feedback. With built-in support for topics, all user messages
-are intelligently categorized, promoting organized and streamlined discussion in your group. It provides features such
-as blocking unwanted users, silent mode in topics for discreet conversations, and more. Improve group communication with
-Support Bot!
-
-* Bot example: [@nessshonSupportBot](https://t.me/nessshonSupportBot)
-* Linked group example: [@nessshonSupportGroup](https://t.me/nessshonSupportGroup)
+**Support Bot** is a Telegram bot for customer support. All user messages land in separate forum topics in your group, keeping conversations organized. It supports blocking users, silent mode, and — optionally — a **web widget** that lets website visitors write to support directly from any page without opening Telegram.
 
 **About Limits**:
 <blockquote>
-Specific limits are not specified in the documentation, but the community has shared some rough numbers. 
+Specific limits are not specified in the documentation, but the community has shared some rough numbers.
 <br>
 • Limit on topic creation per minute <b>~20</b>.
 <br>
 • Limit on the total number of topics <b>~1M</b>.
 </blockquote>
 
+---
+
+## Web Widget
+
+The bot includes a built-in HTTP API and an embeddable JS widget. Visitors on your website can chat with support and receive replies — all messages appear in the same Telegram group as regular bot conversations.
+
+### How it works
+
+1. User opens your site → widget loads from `GET /widget.js`
+2. Widget calls `POST /widget/session` with the user's ID from your system
+3. First message creates a forum topic in the group: `User 123`
+4. Support replies in the topic → widget polls `GET /widget/messages` every 3 seconds
+5. Photos and files are proxied through `GET /widget/file/{file_id}` — the bot token is never exposed to the browser
+
+### Embed
+
+```html
+<script src="https://widget.your-domain.com/widget.js"
+        data-user-id="7">
+</script>
+```
+
+The script tag can be placed anywhere in the page. It injects a floating chat button automatically.
+
+### Attributes
+
+| Attribute | Required | Description |
+| --- | --- | --- |
+| `data-user-id` | ✓ | User ID in your system (SHM) |
+| `data-api` | — | API base URL if different from the script origin |
+| `data-lang` | — | Interface language: `ru` (default) or `en` |
+| `data-color-primary` | — | Main color — button, header, outgoing bubbles. Default `#2563eb` |
+| `data-color-primary-dark` | — | Hover color. Default: auto-darkened by 15% |
+| `data-color-primary-light` | — | Icon hover background. Default: auto-tinted |
+
+### Color examples
+
+```html
+<!-- Green -->
+<script src="https://widget.your-domain.com/widget.js"
+        data-user-id="7"
+        data-color-primary="#16a34a">
+</script>
+
+<!-- Purple with custom hover -->
+<script src="https://widget.your-domain.com/widget.js"
+        data-user-id="7"
+        data-color-primary="#7c3aed"
+        data-color-primary-dark="#5b21b6">
+</script>
+```
+
+You can also configure via `window.__SW` before the script loads:
+
+```html
+<script>
+  window.__SW = { colorPrimary: '#dc2626' };
+</script>
+<script src="https://widget.your-domain.com/widget.js" data-user-id="7"></script>
+```
+
+### nginx setup (required for HTTPS and file uploads)
+
+The bot serves the widget API on port `8080` internally. Use nginx as a reverse proxy so the widget loads over HTTPS.
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name widget.your-domain.com;
+
+    # SSL config here ...
+
+    client_max_body_size 20m;   # allow file uploads up to 10 MB
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+### Group commands for web sessions
+
+`/information` works in web widget topics and shows:
+
+- SHM User ID
+- Name and login (if `GET_DATA_URL` is configured)
+- Session creation date
+- A button to open the user in SHM admin panel (if `SHM_API_URL` is set)
+
+### Full API reference
+
+See [api.md](api.md) for all endpoints, request/response formats, curl examples, and polling implementation guide.
+
+---
+
+## Bot commands
+
 <details>
-<summary><b>Available bot commands for admins (DEV_ID)</b></summary>
+<summary><b>Admin commands (DEV_ID, DEV_IDS)</b></summary>
 
-* `/newsletter` - Open the newsletter menu.
-
-  Use this command to initiate a newsletter for users.
-  **Note**: This command works only in private chats.
+- `/newsletter` — open the newsletter menu. Works in private chats only.
 
 </details>
 
 <details>
-<summary><b>Available bot commands in the group topics</b></summary>
+<summary><b>Group topic commands</b></summary>
 
-* `/ban` - Block/Unblock User.
-
-  Use this command to block or unblock a user, controlling the receipt of messages from them.
-
-* `/silent` - Activate/Deactivate Silent Mode.
-
-  Enable or disable silent mode to prevent messages from being sent to the user.
-
-* `/information` - User Information.
-
-  Receive a message containing basic information about the user.
+- `/ban` — block or unblock a user
+- `/silent` — enable or disable silent mode (messages won't be forwarded to the user)
+- `/information` — show user info (works for both Telegram and web widget sessions)
 
 </details>
+
 
 ## Usage
 
 <details>
 <summary><b>Preparation</b></summary>
 
-1. Create a bot via [@BotFather](https://t.me/BotFather) and save the TOKEN (referred to as `BOT_TOKEN` later).
-2. Create a group and enable topics in the group settings.
-3. Add the created bot to the group as an admin and grant it the necessary rights to manage topics.
-4. Add the bot [What's my Telegram ID?](https://t.me/my_id_bot) to the group and save the group ID (referred to
-   as `BOT_GROUP_ID` later).
-5. Optionally, customize the bot texts to fit your needs in the file
-   named [texts](https://github.com/nessshon/support-bot/tree/main/app/bot/utils/texts.py).
-6. Optionally, add the language you need
-   to [SUPPORTED_LANGUAGES](https://github.com/nessshon/support-bot/tree/main/app/bot/utils/texts.py#L4)
-   and add the appropriate codes to
-   the [data](https://github.com/nessshon/support-bot/tree/main/app/bot/utils/texts.py#L49).
+1. Create a bot via [@BotFather](https://t.me/BotFather) and save the token (`BOT_TOKEN`).
+2. Create a Telegram group and enable topics in the group settings.
+3. Add the bot to the group as an admin with rights to manage topics.
+4. Get the group ID via [@my_id_bot](https://t.me/my_id_bot) and save it as `BOT_GROUP_ID`.
+5. Optionally configure widget integration — see environment variables below.
+6. Optionally customize bot texts in `app/bot/utils/texts.py`.
 
 </details>
 
 <details>
 <summary><b>Installation</b></summary>
 
-You need your own server or you can rent one from a hosting provider. For this, check out the [Recommended Hosting Provider](#recommended-hosting-provider) section below.
+You need a server with Docker. For hosting options see [Recommended Hosting Provider](#recommended-hosting-provider).
 
 1. Clone the repository:
 
     ```bash
-    git clone https://github.com/nessshon/support-bot.git
+    git clone https://github.com/bkeenke/support-bot.git
     ```
 
-2. Change into the bot directory:
+2. Change into the directory:
 
     ```bash
     cd support-bot
     ```
-3. Clone environment variables file:
 
-   ```bash
-   cp .env.example .env
-   ```
+3. Copy the environment file:
 
-4. Configure [environment variables](#environment-variables-reference) variables file:
+    ```bash
+    cp .env.example .env
+    ```
 
-   ```bash
-   nano .env
-   ```
+4. Configure environment variables:
 
-5. Running a bot in a docker container:
+    ```bash
+    nano .env
+    ```
 
-   ```bash
-   docker-compose up --build
-   ```
+5. Start:
+
+    ```bash
+    docker compose up --build -d
+    ```
 
 </details>
+
+---
 
 ## Environment Variables Reference
 
 <details>
 <summary>Click to expand</summary>
 
-Here is a comprehensive reference guide for the environment variables used in the project:
+### Bot
 
-| Variable       | Type  | Description                                                   | Example               |
-|----------------|-------|---------------------------------------------------------------|-----------------------|
-| `BOT_TOKEN`    | `str` | Bot token, obtained from [@BotFather](https://t.me/BotFather) | `123456:qweRTY`       | 
-| `BOT_DEV_ID`   | `int` | User ID of the bot developer or admin                         | `123456789`           |
-| `BOT_GROUP_ID` | `str` | Group ID where the bot operates                               | `-100123456789`       |
-| `BOT_EMOJI_ID` | `str` | The custom emoji ID for the group's topic.                    | `5417915203100613993` |
-| `REDIS_HOST`   | `str` | The hostname or IP address of the Redis server                | `redis`               |
-| `REDIS_PORT`   | `int` | The port number on which the Redis server is running          | `6379`                |
-| `REDIS_DB`     | `int` | The Redis database number                                     | `1`                   |
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `BOT_TOKEN` | `str` | Bot token from [@BotFather](https://t.me/BotFather) | `123456:qweRTY` |
+| `BOT_DEV_ID` | `int` | Telegram user ID of the developer / admin | `123456789` |
+| `BOT_GROUP_ID` | `str` | Group ID where the bot operates | `-100123456789` |
+| `BOT_EMOJI_ID` | `str` | Custom emoji ID for forum topic icons | `5417915203100613993` |
+| `SHM_API_URL` | `str` | Base URL for the SHM admin panel (user info button) | `https://bill.example.com/index.php?m=clients&action=show` |
+
+### Redis
+
+| Variable | Type | Description | Example |
+| --- | --- | --- | --- |
+| `REDIS_HOST` | `str` | Redis hostname | `redis` |
+| `REDIS_PORT` | `int` | Redis port | `6379` |
+| `REDIS_DB` | `int` | Redis database number | `1` |
+
+### Web Widget API
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `WIDGET_API_HOST` | `0.0.0.0` | Host for the HTTP server |
+| `WIDGET_API_PORT` | `8080` | Port for the HTTP server |
+| `WIDGET_CORS_ORIGINS` | _(all)_ | Allowed origins, comma-separated. Empty = allow all. Example: `bill.example.com,app.example.com` |
+| `GET_ID_URL` | — | URL to verify a user exists: `GET {url}?user_id=7` → 200 if valid. Session creation is blocked if the user is not found. |
+| `GET_DATA_URL` | — | URL to fetch user data: `GET {url}?user_id=7` → `{"full_name": "...", "login": "..."}`. Used to populate the `/information` command. |
+
+</details>
 
 <details>
 <summary>List of supporting custom emoji ID's</summary>
@@ -222,16 +321,6 @@ Here is a comprehensive reference guide for the environment variables used in th
 `5348436127038579546` - ✈️
 
 `5357120306097956843` - 🧳
-
-`5310303848311562896` - 🏖
-
-`5350424168615649565` - ⛅️
-
-`5413625003218313783` - 🦄
-
-`5350699789551935589` - 🛍
-
-`5377478880577724584` - 👜
 
 `5310303848311562896` - 🏖
 
@@ -361,33 +450,11 @@ Here is a comprehensive reference guide for the environment variables used in th
 
 </details>
 
-</details>
-
-## Recommended Hosting Provider
-
-I recommend using [aeza.net](https://aeza.net/?ref=362599) for your hosting needs. Here's why:
-
-- **24/7 Support**: Quick and effective support via chat or phone.
-- **Promo Plan for €1**: Great for testing Telegram bots and small websites.
-- **Easy Backups**: Secure backups on independent servers.
-- **Hourly Billing**: Rent a server by the hour for testing or demos.
-- **Anti-DDoS Protection**: Reliable and secure internet connection for your business.
-- **Multiple Payment Methods**: Supports various payment methods, including cryptocurrencies like TON.
-
-Learn more at [aeza.net](https://aeza.net/?ref=362599).
-
-## Donations
-
-**TON** - `EQC-3ilVr-W0Uc3pLrGJElwSaFxvhXXfkiQA3EwdVBHNNess`
-
-**USDT** (TRC-20) - `TDHMG7JRkmJBDD1qd4bNhdfoy2uzVd8ixA`
 
 ## Contribution
 
-We welcome your contributions! If you have ideas for improvement or have identified a bug, please create an issue or
-submit a pull request.
+Issues and pull requests are welcome.
 
 ## License
 
-This repository is distributed under the [MIT License](LICENSE).
-Feel free to use, modify, and distribute the code in accordance with the terms of the license.
+[MIT License](LICENSE)

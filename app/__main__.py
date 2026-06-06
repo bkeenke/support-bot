@@ -10,9 +10,11 @@ from aiohttp_socks import ProxyConnector
 from apscheduler.jobstores.redis import RedisJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from .api import create_app, start_server
 from .bot import commands
 from .bot.handlers import include_routers
 from .bot.middlewares import register_middlewares
+from .bot.utils.redis import RedisStorage as BotRedisStorage
 from .bot.utils.texts import load_faq_text
 from .config import load_config, Config
 
@@ -127,12 +129,20 @@ async def main() -> None:
         dp, config=config, redis=storage.redis, apscheduler=apscheduler
     )
 
+    # Start widget HTTP API
+    bot_redis = BotRedisStorage(storage.redis)
+    api_app = create_app(bot, bot_redis, config)
+    api_runner = await start_server(api_app, config.api.HOST, config.api.PORT)
+
     # Start the bot
     logger.info("Connecting to Telegram API...")
     await bot.delete_webhook(request_timeout=15)
     me = await bot.get_me(request_timeout=15)
     logger.info("Bot started: @%s (id=%d)", me.username, me.id)
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        await api_runner.cleanup()
 
 
 if __name__ == "__main__":
