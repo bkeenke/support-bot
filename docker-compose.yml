@@ -13,6 +13,8 @@ services:
       - redis
     networks:
       - network
+    volumes:
+      - ./media:/app/media
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

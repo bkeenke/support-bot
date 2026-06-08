@@ -1,5 +1,9 @@
 import asyncio
+import logging
+import os
 import time
+import uuid
+from pathlib import Path
 from typing import Optional
 
 from aiogram import Router, F
@@ -11,6 +15,9 @@ from aiogram.utils.markdown import hlink
 from app.bot.manager import Manager
 from app.bot.types.album import Album
 from app.bot.utils.redis import RedisStorage
+
+logger = logging.getLogger(__name__)
+MEDIA_DIR = Path(os.getenv("MEDIA_DIR", "/app/media"))
 
 router = Router()
 router.message.filter(
@@ -53,6 +60,19 @@ async def handler(message: Message) -> None:
     await message.delete()
 
 
+async def _save_local(bot, session_id: str, file_id: str, ext: str = "bin") -> str | None:
+    try:
+        folder = MEDIA_DIR / session_id
+        folder.mkdir(parents=True, exist_ok=True)
+        tg_file = await bot.get_file(file_id)
+        filename = f"{uuid.uuid4().hex}.{ext}"
+        await bot.download_file(tg_file.file_path, destination=folder / filename)
+        return filename
+    except Exception as exc:
+        logger.error("_save_local failed session=%s: %s: %s", session_id, type(exc).__name__, exc)
+        return None
+
+
 async def _push_to_web_inbox(redis: RedisStorage, session_id: str, message: Message) -> None:
     entry: dict = {"ts": int(time.time()), "from": "support"}
 
@@ -62,10 +82,23 @@ async def _push_to_web_inbox(redis: RedisStorage, session_id: str, message: Mess
         entry["text"] = message.caption
 
     if message.photo:
-        entry["photo_file_id"] = message.photo[-1].file_id
+        file_id = message.photo[-1].file_id
+        filename = await _save_local(message.bot, session_id, file_id, "jpg")
+        if filename:
+            entry["local_photo"] = filename
+        else:
+            entry["photo_file_id"] = file_id  # fallback: proxy from Telegram
     elif message.document:
-        entry["doc_file_id"] = message.document.file_id
-        entry["file_name"] = message.document.file_name
+        file_id = message.document.file_id
+        orig = message.document.file_name or "file.bin"
+        ext = orig.rsplit(".", 1)[-1] if "." in orig else "bin"
+        filename = await _save_local(message.bot, session_id, file_id, ext)
+        if filename:
+            entry["local_doc"] = filename
+            entry["file_name"] = orig
+        else:
+            entry["doc_file_id"] = file_id  # fallback
+            entry["file_name"] = orig
 
     await redis.push_web_inbox(session_id, entry)
 

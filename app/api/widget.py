@@ -1,14 +1,20 @@
 import asyncio
 import json
 import logging
+import mimetypes
+import os
 import time
 from pathlib import Path
 from uuid import uuid4
+
+MEDIA_DIR = Path(os.getenv("MEDIA_DIR", "/app/media"))
 
 import aiohttp
 from aiohttp import web
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.markdown import hbold, hcode
 from aiogram.types import BufferedInputFile
 
 from app.bot.utils.create_forum_topic import create_forum_topic
@@ -25,6 +31,7 @@ MAX_TEXT_LEN = 4096
 MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
 RATE_MESSAGES_PER_SESSION = (20, 60)  # 20 messages per session per minute
 RATE_UPLOADS_PER_SESSION = (10, 60)   # 10 uploads per session per minute
+_IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
 
 
 def _cors(request: web.Request) -> dict:
@@ -136,12 +143,49 @@ async def _ensure_topic(
         thread_id = await create_forum_topic(bot, config, name)
         session.thread_id = thread_id
         await rs.update_web_session(session)
+        await _send_web_welcome(bot, config, session, thread_id)
         return thread_id, None
     except Exception as exc:
         logger.exception("Failed to create web forum topic for session %s", session.session_id)
         return None, str(exc)
     finally:
         await rs.redis.delete(lock_key)
+
+
+async def _send_web_welcome(bot: Bot, config: Config, session: WebSession, thread_id: int) -> None:
+    lines = [f"🌐 Новый чат из {hbold('Web Widget')}\n"]
+    lines.append(f"<b>SHM User ID:</b> {hcode(session.external_id)}")
+    if session.full_name:
+        lines.append(f"<b>Имя:</b> {hbold(session.full_name)}")
+    if session.login:
+        lines.append(f"<b>Логин:</b> {session.login}")
+    lines.append(f"<b>Дата:</b> {session.created_at}")
+    lines.append(
+        "\n<b>Доступные команды:</b>\n"
+        "• /information\n"
+        "<blockquote>Информация о пользователе.</blockquote>"
+    )
+    text = "\n".join(lines)
+
+    markup = None
+    if config.bot.SHM_API_URL:
+        markup = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(
+                text="👤 Открыть в SHM",
+                url=f"{config.bot.SHM_API_URL}&q={session.external_id}",
+            )
+        ]])
+
+    try:
+        msg = await bot.send_message(
+            chat_id=config.bot.GROUP_ID,
+            message_thread_id=thread_id,
+            text=text,
+            reply_markup=markup,
+        )
+        await msg.pin(disable_notification=True)
+    except Exception as exc:
+        logger.warning("_send_web_welcome failed for session %s: %s", session.session_id, exc)
 
 
 # ---------------------------------------------------------------------------
@@ -285,21 +329,52 @@ async def upload_photo(request: web.Request) -> web.Response:
 
     filename = field.filename or "upload.jpg"
 
+    # Save the file locally right now — we already have the bytes
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
+    local_filename = f"{uuid4().hex}.{ext}"
+    local_saved = False
+    try:
+        folder = MEDIA_DIR / session.session_id
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / local_filename).write_bytes(data)
+        local_saved = True
+    except Exception as exc:
+        logger.error("upload: failed to save locally for session=%s: %s", session.session_id, exc)
+
+    is_image = ext in _IMAGE_EXTS
+
     for attempt in range(2):
         thread_id, err_msg = await _ensure_topic(rs, bot, config, session)
         if err_msg:
             return _json({"error": "Failed to create topic"}, 500, request)
         try:
-            sent = await bot.send_photo(
-                chat_id=config.bot.GROUP_ID,
-                message_thread_id=thread_id,
-                photo=BufferedInputFile(data, filename=filename),
-            )
-            assert sent.photo
-            await rs.push_web_inbox(session.session_id, {
-                "ts": int(time.time()), "from": "user",
-                "photo_file_id": sent.photo[-1].file_id,
-            })
+            if is_image:
+                sent = await bot.send_photo(
+                    chat_id=config.bot.GROUP_ID,
+                    message_thread_id=thread_id,
+                    photo=BufferedInputFile(data, filename=filename),
+                )
+                assert sent.photo
+                entry: dict = {"ts": int(time.time()), "from": "user"}
+                if local_saved:
+                    entry["local_photo"] = local_filename
+                else:
+                    entry["photo_file_id"] = sent.photo[-1].file_id
+            else:
+                sent = await bot.send_document(
+                    chat_id=config.bot.GROUP_ID,
+                    message_thread_id=thread_id,
+                    document=BufferedInputFile(data, filename=filename),
+                )
+                assert sent.document
+                entry = {"ts": int(time.time()), "from": "user"}
+                if local_saved:
+                    entry["local_doc"] = local_filename
+                    entry["file_name"] = filename
+                else:
+                    entry["doc_file_id"] = sent.document.file_id
+                    entry["file_name"] = sent.document.file_name or filename
+            await rs.push_web_inbox(session.session_id, entry)
             break
         except TelegramBadRequest as exc:
             if "message thread not found" in str(exc).lower() and attempt == 0:
@@ -307,23 +382,8 @@ async def upload_photo(request: web.Request) -> web.Response:
                 session.thread_id = None
                 await rs.update_web_session(session)
                 continue
-            # Fallback: try as document (e.g. not a valid photo)
-            try:
-                sent = await bot.send_document(
-                    chat_id=config.bot.GROUP_ID,
-                    message_thread_id=thread_id,
-                    document=BufferedInputFile(data, filename=filename),
-                )
-                assert sent.document
-                await rs.push_web_inbox(session.session_id, {
-                    "ts": int(time.time()), "from": "user",
-                    "doc_file_id": sent.document.file_id,
-                    "file_name": sent.document.file_name or filename,
-                })
-                break
-            except TelegramAPIError as exc2:
-                logger.error("Telegram error uploading web file: %s", exc2)
-                return _json({"error": "Telegram API error"}, 500, request)
+            logger.error("Telegram error uploading web file: %s", exc)
+            return _json({"error": "Telegram API error"}, 500, request)
         except TelegramAPIError as exc:
             logger.error("Telegram error uploading web file: %s", exc)
             return _json({"error": "Telegram API error"}, 500, request)
@@ -331,17 +391,19 @@ async def upload_photo(request: web.Request) -> web.Response:
     return _json({"ok": True}, request=request)
 
 
-async def _get_tg_file_path(bot: Bot, redis, file_id: str) -> str | None:
+async def _get_tg_file_path(bot: Bot, redis, file_id: str, force: bool = False) -> str | None:
     cache_key = f"tg_fp:{file_id}"
-    cached = await redis.get(cache_key)
-    if cached:
-        return cached.decode()
+    if not force:
+        cached = await redis.get(cache_key)
+        if cached:
+            return cached.decode()
     try:
         tg_file = await bot.get_file(file_id)
-        await redis.setex(cache_key, 3600, tg_file.file_path)
+        # cache for 30 min — Telegram paths expire in ~1 hour
+        await redis.setex(cache_key, 1800, tg_file.file_path)
         return tg_file.file_path
     except Exception as exc:
-        logger.error("get_file failed for file_id=%s: %s", file_id, exc)
+        logger.error("get_file failed for file_id=%.30s: %s: %s", file_id, type(exc).__name__, exc)
         return None
 
 
@@ -360,29 +422,74 @@ async def proxy_file(request: web.Request) -> web.StreamResponse:
 
     file_path = await _get_tg_file_path(bot, rs.redis, file_id)
     if not file_path:
-        logger.error("proxy_file: no file_path for file_id=%.30s", file_id)
         return web.Response(status=404)
 
-    url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
-    try:
-        timeout = aiohttp.ClientTimeout(total=120, connect=10)
-        async with request.app["http"].get(url, timeout=timeout) as r:
-            if r.status != 200:
-                logger.error("proxy_file: telegram returned %s for %s", r.status, file_path)
-                return web.Response(status=404)
-            content_type = r.headers.get("Content-Type", "application/octet-stream")
-            response = web.StreamResponse(headers={
-                "Content-Type": content_type,
-                "Cache-Control": "private, max-age=3600",
-            })
-            await response.prepare(request)
-            async for chunk in r.content.iter_chunked(64 * 1024):
-                await response.write(chunk)
-            await response.write_eof()
-            return response
-    except Exception as exc:
-        logger.error("proxy_file: download failed for %s: %s", file_path, exc)
-        return web.Response(status=502)
+    timeout = aiohttp.ClientTimeout(total=60, connect=15, sock_read=30)
+
+    for attempt in range(2):
+        url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
+        try:
+            async with request.app["http"].get(url, timeout=timeout) as r:
+                if r.status in (403, 404) and attempt == 0:
+                    # cached file_path may be stale — re-fetch from Telegram
+                    logger.warning(
+                        "proxy_file: Telegram returned %s (stale path?), refreshing for %.30s",
+                        r.status, file_id,
+                    )
+                    file_path = await _get_tg_file_path(bot, rs.redis, file_id, force=True)
+                    if not file_path:
+                        return web.Response(status=404)
+                    continue
+                if r.status != 200:
+                    logger.error("proxy_file: Telegram returned %s for %s", r.status, file_path)
+                    return web.Response(status=404)
+                content_type = r.headers.get("Content-Type", "application/octet-stream")
+                response = web.StreamResponse(headers={
+                    "Content-Type": content_type,
+                    "Cache-Control": "private, max-age=1800",
+                })
+                await response.prepare(request)
+                async for chunk in r.content.iter_chunked(64 * 1024):
+                    await response.write(chunk)
+                await response.write_eof()
+                return response
+        except Exception as exc:
+            logger.error(
+                "proxy_file: attempt %d failed for %s: %s",
+                attempt + 1, file_path, type(exc).__name__,
+            )
+            return web.Response(status=502)
+
+
+@router.get("/widget/media/{session_id}/{filename}")
+async def serve_media(request: web.Request) -> web.Response:
+    sid = request.rel_url.query.get("sid", "").strip()
+    session_id = request.match_info["session_id"]
+    filename = request.match_info["filename"]
+
+    if not sid or sid != session_id:
+        return web.Response(status=401)
+
+    rs: RedisStorage = request.app["rs"]
+    if not await rs.get_web_session(sid):
+        return web.Response(status=401)
+
+    # Prevent path traversal — neither segment should contain dots or slashes
+    if ".." in filename or "/" in filename or ".." in session_id:
+        return web.Response(status=400)
+
+    file_path = MEDIA_DIR / session_id / filename
+    if not file_path.exists():
+        return web.Response(status=404)
+
+    content_type, _ = mimetypes.guess_type(filename)
+    return web.FileResponse(
+        file_path,
+        headers={
+            "Content-Type": content_type or "application/octet-stream",
+            "Cache-Control": "private, max-age=86400",
+        },
+    )
 
 
 @router.get("/widget/messages")
@@ -401,14 +508,18 @@ async def get_messages(request: web.Request) -> web.Response:
     raw = await rs.get_web_inbox(session.session_id, offset)
     total = await rs.get_web_inbox_len(session.session_id)
 
-    # Подменяем file_id на прокси-URL — токен бота клиент не видит
     sid = session.session_id
     messages = []
+    skip = {"photo_file_id", "doc_file_id", "local_photo", "local_doc"}
     for msg in raw:
-        m = {k: v for k, v in msg.items() if k not in ("photo_file_id", "doc_file_id")}
-        if "photo_file_id" in msg:
+        m = {k: v for k, v in msg.items() if k not in skip}
+        if "local_photo" in msg:
+            m["photo_url"] = f"/widget/media/{sid}/{msg['local_photo']}?sid={sid}"
+        elif "photo_file_id" in msg:
             m["photo_url"] = f"/widget/file/{msg['photo_file_id']}?sid={sid}"
-        if "doc_file_id" in msg:
+        if "local_doc" in msg:
+            m["file_url"] = f"/widget/media/{sid}/{msg['local_doc']}?sid={sid}"
+        elif "doc_file_id" in msg:
             m["file_url"] = f"/widget/file/{msg['doc_file_id']}?sid={sid}"
         messages.append(m)
 
