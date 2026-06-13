@@ -73,14 +73,14 @@ async def load_faq_text(language: str, url: str, proxy: str | None = None) -> No
     """
     Fetch FAQ HTML from url and store in cache for the given language.
     Falls back silently on error.
-    
+
     :param language: Language code ("ru" or "en")
     :param url: URL to fetch FAQ from
     :param proxy: Optional proxy URL
     """
     if not url:
         return
-    
+
     try:
         async with aiohttp.ClientSession() as session:
             kwargs = {"proxy": proxy} if proxy and not proxy.startswith("socks") else {}
@@ -194,6 +194,8 @@ class TextMessage(Text):
                     "- {state}\n"
                     "<b>Username:</b>\n"
                     "- {username}\n"
+                    "<b>Email:</b>\n"
+                    "- {email}\n"
                     "<b>Blocked:</b>\n"
                     "- {is_banned}\n"
                     "<b>Registration date:</b>\n"
@@ -248,6 +250,8 @@ class TextMessage(Text):
                     "- {state}\n"
                     "<b>Username:</b>\n"
                     "- {username}\n"
+                    "<b>Email:</b>\n"
+                    "- {email}\n"
                     "<b>Заблокирован:</b>\n"
                     "- {is_banned}\n"
                     "<b>Дата регистрации:</b>\n"

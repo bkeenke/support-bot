@@ -149,3 +149,10 @@ class RedisStorage:
 
     async def get_web_inbox_len(self, session_id: str) -> int:
         return await self.redis.llen(f"web_inbox:{session_id}")
+
+    async def get_read_cursor(self, session_id: str) -> int:
+        val = await self.redis.get(f"web_inbox_read:{session_id}")
+        return int(val) if val else 0
+
+    async def set_read_cursor(self, session_id: str, cursor: int) -> None:
+        await self.redis.set(f"web_inbox_read:{session_id}", cursor)

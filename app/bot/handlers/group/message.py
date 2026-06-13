@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+import aiohttp
 from aiogram import Router, F
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import MagicData
@@ -103,6 +104,26 @@ async def _push_to_web_inbox(redis: RedisStorage, session_id: str, message: Mess
     await redis.push_web_inbox(session_id, entry)
 
 
+async def _fire_read_webhook(
+    url: str, user_id: str, text: str,
+    redis: RedisStorage, session_id: str, msg_index: int, delay: int,
+    secret: str | None = None,
+) -> None:
+    await asyncio.sleep(delay)
+    cursor = await redis.get_read_cursor(session_id)
+    if cursor > msg_index:
+        return  # user read it during the delay
+    try:
+        timeout = aiohttp.ClientTimeout(total=10)
+        headers = {"x-secret": secret} if secret else {}
+        async with aiohttp.ClientSession(timeout=timeout) as http:
+            async with http.post(url, json={"user_id": user_id, "text": text}, headers=headers) as r:
+                if r.status >= 400:
+                    logger.warning("read_webhook returned %s for user_id=%s", r.status, user_id)
+    except Exception as exc:
+        logger.warning("read_webhook failed for user_id=%s: %s", user_id, exc)
+
+
 @router.message(F.media_group_id, F.from_user[F.is_bot.is_(False)])
 @router.message(F.media_group_id.is_(None), F.from_user[F.is_bot.is_(False)])
 async def handler(message: Message, manager: Manager, redis: RedisStorage, album: Optional[Album] = None) -> None:
@@ -120,6 +141,18 @@ async def handler(message: Message, manager: Manager, redis: RedisStorage, album
     session_id = await redis.get_session_id_by_thread(message.message_thread_id)
     if session_id:
         await _push_to_web_inbox(redis, session_id, message)
+        webhook_url = manager.config.api.READ_WEBHOOK_URL
+        if webhook_url:
+            total = await redis.get_web_inbox_len(session_id)
+            session = await redis.get_web_session(session_id)
+            if session:
+                text = message.text or message.caption or ""
+                delay = manager.config.api.READ_WEBHOOK_DELAY
+                asyncio.create_task(_fire_read_webhook(
+                    webhook_url, session.external_id, text,
+                    redis, session_id, total - 1, delay,
+                    manager.config.api.API_SECRET_KEY,
+                ))
         return
 
     user_data = await redis.get_by_message_thread_id(message.message_thread_id)

@@ -10,6 +10,9 @@ class ApiConfig:
     CORS_ORIGINS: list[str]
     GET_ID_URL: str | None
     GET_DATA_URL: str | None
+    READ_WEBHOOK_URL: str | None
+    READ_WEBHOOK_DELAY: int
+    API_SECRET_KEY: str | None
 
 
 @dataclass
@@ -106,6 +109,9 @@ def load_config() -> Config:
             CORS_ORIGINS=[o for o in env.list("WIDGET_CORS_ORIGINS", default=[]) if o.strip()],
             GET_ID_URL=env.str("GET_ID_URL", default=None) or None,
             GET_DATA_URL=env.str("GET_DATA_URL", default=None) or None,
+            READ_WEBHOOK_URL=env.str("READ_WEBHOOK_URL", default=None) or None,
+            READ_WEBHOOK_DELAY=env.int("READ_WEBHOOK_DELAY", default=30),
+            API_SECRET_KEY=env.str("API_SECRET_KEY", default=None) or None,
         ),
         proxy=env.str("PROXY_URL", default=None) or None,
         faq_ru_url=env.str("FAQ_TEXT_URL", default=None) or None,

@@ -71,18 +71,20 @@ def _json(data: dict, status: int = 200, request: web.Request = None) -> web.Res
     )
 
 
-async def _user_exists(http, url: str, user_id: int) -> bool:
+async def _user_exists(http, url: str, user_id: int, secret: str | None = None) -> bool:
+    headers = {"x-secret": secret} if secret else {}
     try:
-        async with http.get(f"{url}?user_id={user_id}") as r:
+        async with http.get(f"{url}?user_id={user_id}", headers=headers) as r:
             return r.status == 200
     except Exception:
         logger.warning("GET_ID_URL check failed for user_id=%s, allowing through", user_id)
         return True  # fail open: не блокируем при недоступности API
 
 
-async def _fetch_user_data(http, url: str, user_id: int) -> dict:
+async def _fetch_user_data(http, url: str, user_id: int, secret: str | None = None) -> dict:
+    headers = {"x-secret": secret} if secret else {}
     try:
-        async with http.get(f"{url}?user_id={user_id}") as r:
+        async with http.get(f"{url}?user_id={user_id}", headers=headers) as r:
             if r.status == 200:
                 return await r.json()
     except Exception:
@@ -225,7 +227,7 @@ async def create_session(request: web.Request) -> web.Response:
         return _json({"error": "user_id required"}, 400, request)
 
     if config.api.GET_ID_URL:
-        if not await _user_exists(request.app["http"], config.api.GET_ID_URL, int(user_id)):
+        if not await _user_exists(request.app["http"], config.api.GET_ID_URL, int(user_id), config.api.API_SECRET_KEY):
             return _json({"error": "User not found"}, 404, request)
 
     existing = await rs.get_web_session_by_user_id(int(user_id))
@@ -234,7 +236,7 @@ async def create_session(request: web.Request) -> web.Response:
 
     shm_data = {}
     if config.api.GET_DATA_URL:
-        shm_data = await _fetch_user_data(request.app["http"], config.api.GET_DATA_URL, int(user_id))
+        shm_data = await _fetch_user_data(request.app["http"], config.api.GET_DATA_URL, int(user_id), config.api.API_SECRET_KEY)
 
     sid = str(uuid4())
     session = WebSession(
@@ -507,11 +509,12 @@ async def get_messages(request: web.Request) -> web.Response:
 
     raw = await rs.get_web_inbox(session.session_id, offset)
     total = await rs.get_web_inbox_len(session.session_id)
+    cursor = await rs.get_read_cursor(session.session_id)
 
     sid = session.session_id
     messages = []
     skip = {"photo_file_id", "doc_file_id", "local_photo", "local_doc"}
-    for msg in raw:
+    for i, msg in enumerate(raw):
         m = {k: v for k, v in msg.items() if k not in skip}
         if "local_photo" in msg:
             m["photo_url"] = f"/widget/media/{sid}/{msg['local_photo']}?sid={sid}"
@@ -521,6 +524,10 @@ async def get_messages(request: web.Request) -> web.Response:
             m["file_url"] = f"/widget/media/{sid}/{msg['local_doc']}?sid={sid}"
         elif "doc_file_id" in msg:
             m["file_url"] = f"/widget/file/{msg['doc_file_id']}?sid={sid}"
+        m["read"] = (offset + i) < cursor
         messages.append(m)
+
+    if total > cursor:
+        await rs.set_read_cursor(session.session_id, total)
 
     return _json({"messages": messages, "total": total, "offset": offset}, request=request)

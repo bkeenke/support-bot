@@ -651,13 +651,13 @@
             newMsgs.forEach((m) => {
                 if (m.from === "user") {
                     const ptIdx = pendingUserTs.findIndex(
-                        (t) => Math.abs(t - m.ts) <= 3,
+                        (t) => Math.abs(t - m.ts) <= 10,
                     );
                     if (ptIdx !== -1) {
                         pendingUserTs.splice(ptIdx, 1);
                         // Replace blob URL with real server URL in msgs[] and DOM
                         const msgIdx = msgs.findIndex(
-                            (lm) => lm.from === "user" && Math.abs(lm.ts - m.ts) <= 3,
+                            (lm) => lm.from === "user" && Math.abs(lm.ts - m.ts) <= 10,
                         );
                         if (msgIdx !== -1) {
                             const lm = msgs[msgIdx];
