@@ -6,7 +6,6 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
-from aiohttp_socks import ProxyConnector
 from apscheduler.jobstores.redis import RedisJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
@@ -95,11 +94,7 @@ async def main() -> None:
 
     _timeout = 15
     if config.proxy:
-        if config.proxy.startswith("socks"):
-            connector = ProxyConnector.from_url(config.proxy)
-            session = AiohttpSession(connector=connector, timeout=_timeout)
-        else:
-            session = AiohttpSession(proxy=config.proxy, timeout=_timeout)
+        session = AiohttpSession(proxy=config.proxy, timeout=_timeout)
     else:
         session = AiohttpSession(timeout=_timeout)
 

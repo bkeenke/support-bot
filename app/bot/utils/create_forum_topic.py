@@ -46,6 +46,18 @@ def _build_topic_name(full_name: str | None, user_id: int) -> str:
 
 _TOPIC_VALID_TTL = 6 * 3600  # probe at most once per 6 hours per topic
 
+# In-memory set of thread IDs that THIS process created.
+# Used by forum_topic_created handler to skip events from other bots.
+_own_topics: set[int] = set()
+
+
+def consume_own_topic(thread_id: int) -> bool:
+    """Return True and remove if this process created the topic, False otherwise."""
+    if thread_id in _own_topics:
+        _own_topics.discard(thread_id)
+        return True
+    return False
+
 
 async def _is_topic_valid(bot: Bot, config: Config, message_thread_id: int) -> bool:
     """
@@ -184,6 +196,8 @@ async def create_forum_topic(
 
         forum_topic = await bot.create_forum_topic(**create_args)
         logging.debug(f"Forum topic created: {display_name} (thread_id={forum_topic.message_thread_id})")
+        # Mark immediately so forum_topic_created handler knows this bot owns it.
+        _own_topics.add(forum_topic.message_thread_id)
         # Telegram may briefly lag before a brand-new topic accepts routed messages.
         await asyncio.sleep(0.4)
         return forum_topic.message_thread_id

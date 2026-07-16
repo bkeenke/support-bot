@@ -40,15 +40,16 @@ class RedisStorage:
         async with self.redis.client() as client:
             await client.hset(name, key, value)
 
-    async def _update_index(self, message_thread_id: int, user_id: int) -> None:
+    async def _update_index(self, message_thread_id: int | None, user_id: int) -> None:
         """
         Updates the user index in Redis.
 
         :param message_thread_id: The ID of the message thread.
         :param user_id: The ID of the user to be updated in the index.
         """
-        index_key = f"{self.NAME}_index_{message_thread_id}"
-        await self._set(index_key, user_id, "1")
+        if message_thread_id is None:
+            return
+        await self.redis.set(f"{self.NAME}_thread:{message_thread_id}", str(user_id))
 
     async def get_by_message_thread_id(self, message_thread_id: int) -> UserData | None:
         """
@@ -58,7 +59,15 @@ class RedisStorage:
         :return: The user data or None if not found.
         """
         user_id = await self._get_user_id_by_message_thread_id(message_thread_id)
-        return None if user_id is None else await self.get_user(user_id)
+        if user_id is None:
+            return None
+        user = await self.get_user(user_id)
+        # Safety net: new-format key could be stale if user moved to another thread
+        # and that old thread was never recycled (so no overwrite happened).
+        if user is None or user.message_thread_id != message_thread_id:
+            await self.redis.delete(f"{self.NAME}_thread:{message_thread_id}")
+            return None
+        return user
 
     async def _get_user_id_by_message_thread_id(self, message_thread_id: int) -> int | None:
         """
@@ -67,10 +76,34 @@ class RedisStorage:
         :param message_thread_id: The ID of the message thread.
         :return: The user ID or None if not found.
         """
-        index_key = f"{self.NAME}_index_{message_thread_id}"
+        # New format: simple string key — SET overwrites, so no accumulation possible.
+        val = await self.redis.get(f"{self.NAME}_thread:{message_thread_id}")
+        if val:
+            return int(val)
+
+        # Legacy format fallback: hash may contain multiple (stale) user_ids.
+        # Iterate all of them, find the one whose current thread matches, migrate, clean up.
+        legacy_key = f"{self.NAME}_index_{message_thread_id}"
         async with self.redis.client() as client:
-            user_ids = await client.hkeys(index_key)
-            return int(user_ids[0]) if user_ids else None
+            raw_ids = await client.hkeys(legacy_key)
+
+        if not raw_ids:
+            return None
+
+        for raw in raw_ids:
+            uid = int(raw)
+            user = await self.get_user(uid)
+            if user and user.message_thread_id == message_thread_id:
+                # Found the correct owner — migrate to new format and delete the old hash.
+                await self.redis.set(f"{self.NAME}_thread:{message_thread_id}", str(uid))
+                async with self.redis.client() as client:
+                    await client.delete(legacy_key)
+                return uid
+
+        # All entries in the legacy hash are stale — delete to prevent repeated scans.
+        async with self.redis.client() as client:
+            await client.delete(legacy_key)
+        return None
 
     async def get_user(self, id_: int) -> UserData | None:
         """

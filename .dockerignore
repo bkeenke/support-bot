@@ -1,0 +1,10 @@
+.git
+.gitignore
+*.md
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+build.sh
+docker-compose.yml

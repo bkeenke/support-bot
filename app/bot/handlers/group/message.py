@@ -3,18 +3,20 @@ import logging
 import os
 import time
 import uuid
+from contextlib import suppress
 from pathlib import Path
 from typing import Optional
 
 import aiohttp
 from aiogram import Router, F
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.filters import MagicData
 from aiogram.types import Message
 from aiogram.utils.markdown import hlink
 
 from app.bot.manager import Manager
 from app.bot.types.album import Album
+from app.bot.utils.create_forum_topic import consume_own_topic
 from app.bot.utils.redis import RedisStorage
 
 logger = logging.getLogger(__name__)
@@ -30,8 +32,15 @@ router.message.filter(
 
 @router.message(F.forum_topic_created)
 async def handler(message: Message, manager: Manager, redis: RedisStorage) -> None:
+    thread_id = message.message_thread_id
+    # Sleep first: create_forum_topic sets _own_topics BEFORE asyncio.sleep(0.4),
+    # so by the time we wake up the flag is guaranteed set (or never will be).
     await asyncio.sleep(3)
-    user_data = await redis.get_by_message_thread_id(message.message_thread_id)
+    # Only the bot that created this topic should post the welcome message.
+    # Other bots skip here — prevents cross-bot contamination when thread IDs are recycled.
+    if not consume_own_topic(thread_id):
+        return
+    user_data = await redis.get_by_message_thread_id(thread_id)
     if not user_data: return None  # noqa
 
     # Generate a URL for the user's profile
@@ -40,14 +49,15 @@ async def handler(message: Message, manager: Manager, redis: RedisStorage) -> No
     # Get the appropriate text based on the user's state
     text = manager.text_message.get("user_started_bot")
 
-    message = await message.bot.send_message(
+    msg = await message.bot.send_message(
         chat_id=manager.config.bot.GROUP_ID,
         text=text.format(name=hlink(user_data.full_name, url)),
-        message_thread_id=user_data.message_thread_id
+        message_thread_id=thread_id,
     )
 
-    # Pin the message
-    await message.pin()
+    # Pin the message — suppress errors from concurrent bots trying the same pin
+    with suppress(TelegramBadRequest):
+        await msg.pin()
 
 
 @router.message(F.pinned_message | F.forum_topic_edited | F.forum_topic_closed | F.forum_topic_reopened)
@@ -58,7 +68,8 @@ async def handler(message: Message) -> None:
     :param message: Message object.
     :return: None
     """
-    await message.delete()
+    with suppress(TelegramBadRequest):
+        await message.delete()
 
 
 async def _save_local(bot, session_id: str, file_id: str, ext: str = "bin") -> str | None:
