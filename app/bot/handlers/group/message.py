@@ -18,6 +18,7 @@ from app.bot.manager import Manager
 from app.bot.types.album import Album
 from app.bot.utils.create_forum_topic import consume_own_topic
 from app.bot.utils.redis import RedisStorage
+from app.bot.utils.topic_history import log_message
 
 logger = logging.getLogger(__name__)
 MEDIA_DIR = Path(os.getenv("MEDIA_DIR", "/app/media"))
@@ -180,6 +181,10 @@ async def handler(message: Message, manager: Manager, redis: RedisStorage, album
             await message.copy_to(chat_id=user_data.id)
         else:
             await album.copy_to(chat_id=user_data.id)
+
+        # Save delivered replies to the history (survives topic auto-deletion)
+        for msg in (album.messages if album else [message]):
+            await log_message(redis, user_data.id, msg, "support")
 
     except TelegramAPIError as ex:
         if "blocked" in ex.message:

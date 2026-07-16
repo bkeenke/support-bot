@@ -140,6 +140,37 @@ class RedisStorage:
             return [int(user_id) for user_id in user_ids]
 
     # ------------------------------------------------------------------
+    # Topic auto-delete: settings, activity tracking, message history
+    # ------------------------------------------------------------------
+
+    TOPIC_TTL_KEY = "settings:topic_autodelete_days"
+    HISTORY_MAX = 500  # keep at most this many messages per user
+
+    async def get_topic_ttl_days(self) -> int:
+        val = await self.redis.get(self.TOPIC_TTL_KEY)
+        return int(val) if val else 0
+
+    async def set_topic_ttl_days(self, days: int) -> None:
+        await self.redis.set(self.TOPIC_TTL_KEY, days)
+
+    async def set_last_activity(self, user_id: int, ts: int) -> None:
+        await self.redis.set(f"activity:{user_id}", ts)
+
+    async def get_last_activity(self, user_id: int) -> int | None:
+        val = await self.redis.get(f"activity:{user_id}")
+        return int(val) if val else None
+
+    async def push_history(self, user_id: int, entry: dict) -> None:
+        key = f"history:{user_id}"
+        async with self.redis.client() as client:
+            await client.rpush(key, json.dumps(entry))
+            await client.ltrim(key, -self.HISTORY_MAX, -1)
+
+    async def get_history(self, user_id: int) -> list[dict]:
+        raw = await self.redis.lrange(f"history:{user_id}", 0, -1)
+        return [json.loads(item) for item in raw]
+
+    # ------------------------------------------------------------------
     # Web widget session methods
     # ------------------------------------------------------------------
 

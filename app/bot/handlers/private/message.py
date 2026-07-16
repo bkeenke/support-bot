@@ -14,6 +14,7 @@ from app.bot.utils.create_forum_topic import (
 )
 from app.bot.utils.redis import RedisStorage
 from app.bot.utils.redis.models import UserData
+from app.bot.utils.topic_history import log_message
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +118,10 @@ async def handle_incoming_message(
                 ex,
             )
             raise
+
+    # Save the message to the history (survives topic auto-deletion)
+    for msg in (album.messages if album else [message]):
+        await log_message(redis, user_data.id, msg, "user")
 
     # Send a confirmation message to the user
     text = manager.text_message.get("message_sent")

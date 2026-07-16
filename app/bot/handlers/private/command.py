@@ -122,6 +122,55 @@ async def handler(message: Message, manager: Manager) -> None:
 
 
 @router.message(
+    Command("autodelete"),
+    MagicData(
+        (F.event_from_user.id == F.config.bot.DEV_ID) |
+        F.event_from_user.id.in_(F.config.bot.DEV_IDS)
+    ),
+)
+async def handler(
+        message: Message,
+        command: CommandObject,
+        manager: Manager,
+        redis: RedisStorage,
+) -> None:
+    """
+    Handles the /autodelete command (dev only).
+
+    `/autodelete` — show the current setting.
+    `/autodelete N` — delete topics inactive for more than N days.
+    `/autodelete 0` — disable auto-deletion.
+    """
+    arg = (command.args or "").strip()
+
+    if not arg:
+        days = await redis.get_topic_ttl_days()
+        status = f"{days} дн." if days > 0 else "выключено"
+        await message.answer(
+            f"🗑 Автоудаление топиков: <b>{status}</b>\n\n"
+            "<code>/autodelete N</code> — удалять топики без активности более N дней\n"
+            "<code>/autodelete 0</code> — отключить"
+        )
+        return
+
+    if not arg.isdigit():
+        await message.answer("Использование: <code>/autodelete N</code> (N — число дней, 0 — отключить)")
+        return
+
+    days = int(arg)
+    await redis.set_topic_ttl_days(days)
+    if days > 0:
+        text = (
+            f"✅ Автоудаление включено: топики без активности более <b>{days} дн.</b> будут удаляться.\n"
+            "Переписка сохраняется — в новом топике её можно открыть командой /show_old_messages."
+        )
+    else:
+        text = "✅ Автоудаление топиков отключено."
+    await message.answer(text)
+    await manager.delete_message(message)
+
+
+@router.message(
     Command("newsletter"),
     MagicData(
         (F.event_from_user.id == F.config.bot.DEV_ID) |

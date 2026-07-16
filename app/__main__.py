@@ -15,6 +15,7 @@ from .bot.handlers import include_routers
 from .bot.middlewares import register_middlewares
 from .bot.utils.redis import RedisStorage as BotRedisStorage
 from .bot.utils.texts import load_faq_text
+from .bot.utils.topic_cleanup import topic_cleanup_loop
 from .config import load_config, Config
 
 logger = logging.getLogger(__name__)
@@ -129,6 +130,9 @@ async def main() -> None:
     api_app = create_app(bot, bot_redis, config)
     api_runner = await start_server(api_app, config.api.HOST, config.api.PORT)
 
+    # Start background auto-deletion of stale forum topics
+    cleanup_task = asyncio.create_task(topic_cleanup_loop(bot, bot_redis, config))
+
     # Start the bot
     logger.info("Connecting to Telegram API...")
     await bot.delete_webhook(request_timeout=15)
@@ -137,6 +141,7 @@ async def main() -> None:
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
+        cleanup_task.cancel()
         await api_runner.cleanup()
 
 

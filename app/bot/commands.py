@@ -42,11 +42,13 @@ async def setup(bot: Bot, config: Config) -> None:
             BotCommand(command="ban", description="Block/Unblock a user"),
             BotCommand(command="silent", description="Activate/Deactivate silent Mode"),
             BotCommand(command="information", description="User information"),
+            BotCommand(command="show_old_messages", description="Show saved conversation history"),
         ],
         "ru": [
             BotCommand(command="ban", description="Заблокировать/Разблокировать пользователя"),
             BotCommand(command="silent", description="Активировать/Деактивировать тихий режим"),
             BotCommand(command="information", description="Информация о пользователе"),
+            BotCommand(command="show_old_messages", description="Показать сохранённую переписку"),
         ]
     }
 
@@ -55,11 +57,13 @@ async def setup(bot: Bot, config: Config) -> None:
             commands["en"].copy() + [
                 BotCommand(command="newsletter", description="Newsletter menu"),
                 BotCommand(command="reload_faq", description="Reload FAQ cache"),
+                BotCommand(command="autodelete", description="Topic auto-deletion (days, 0 = off)"),
             ],
         "ru":
             commands["ru"].copy() + [
                 BotCommand(command="newsletter", description="Меню рассылки"),
                 BotCommand(command="reload_faq", description="Сбросить кеш FAQ"),
+                BotCommand(command="autodelete", description="Автоудаление топиков (дни, 0 = выкл)"),
             ],
     }
 

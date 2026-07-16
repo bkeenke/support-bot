@@ -6,8 +6,11 @@ from aiogram.filters import Command, MagicData
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.markdown import hcode, hbold
 
+import asyncio
+
 from app.bot.manager import Manager
 from app.bot.utils.redis import RedisStorage
+from app.bot.utils.topic_history import format_history
 
 router_id = Router()
 router_id.message.filter(
@@ -137,6 +140,39 @@ async def handler(message: Message, manager: Manager, redis: RedisStorage) -> No
 
     # Reply with formatted user information
     await message.reply(text.format_map(format_data), reply_markup=markup)
+
+
+@router.message(Command("show_old_messages"))
+async def handler(message: Message, redis: RedisStorage) -> None:
+    """
+    Sends the saved conversation history into the topic. Useful after the
+    old topic was auto-deleted and the user wrote again into a fresh one.
+
+    :param message: Message object.
+    :param redis: RedisStorage object.
+    :return: None
+    """
+    user_data = await redis.get_by_message_thread_id(message.message_thread_id)
+    if not user_data: return None  # noqa
+
+    entries = await redis.get_history(user_data.id)
+    if not entries:
+        await message.reply("📭 Сохранённой переписки нет.")
+        return
+
+    chunks, shown = format_history(entries)
+    header = f"📜 История переписки: {len(entries)} сообщ."
+    if shown < len(entries):
+        header += f" (показаны последние {shown})"
+    await message.reply(header)
+
+    for chunk in chunks:
+        await message.bot.send_message(
+            chat_id=message.chat.id,
+            text=chunk,
+            message_thread_id=message.message_thread_id,
+        )
+        await asyncio.sleep(0.5)
 
 
 @router.message(Command(commands=["ban"]))
