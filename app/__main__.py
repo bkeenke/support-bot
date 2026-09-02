@@ -15,6 +15,7 @@ from .bot.handlers import include_routers
 from .bot.middlewares import register_middlewares
 from .bot.utils.redis import RedisStorage as BotRedisStorage
 from .bot.utils.texts import load_faq_text
+from .bot.utils.group_binding import ensure_group_binding
 from .bot.utils.topic_cleanup import topic_cleanup_loop
 from .config import load_config, Config
 
@@ -125,8 +126,11 @@ async def main() -> None:
         dp, config=config, redis=storage.redis, apscheduler=apscheduler
     )
 
-    # Start widget HTTP API
+    # Drop forum topic bindings if the bot was moved to another group
     bot_redis = BotRedisStorage(storage.redis)
+    await ensure_group_binding(bot_redis, config)
+
+    # Start widget HTTP API
     api_app = create_app(bot, bot_redis, config)
     api_runner = await start_server(api_app, config.api.HOST, config.api.PORT)
 

@@ -32,7 +32,12 @@ async def _delete_topic(bot: Bot, config: Config, message_thread_id: int) -> boo
         return await _delete_topic(bot, config, message_thread_id)
     except TelegramBadRequest as ex:
         error_msg = str(ex).lower()
-        if "message thread not found" in error_msg or "topic" in error_msg and "deleted" in error_msg:
+        error_code = error_msg.replace(" ", "")
+        if (
+            "message thread not found" in error_msg
+            or ("topic" in error_msg and "deleted" in error_msg)
+            or "topic_id_invalid" in error_code
+        ):
             return True  # already gone — still clear the mapping
         logger.warning("Failed to delete topic %s: %s", message_thread_id, ex)
         return False
@@ -46,6 +51,17 @@ async def cleanup_old_topics(bot: Bot, redis: RedisStorage, config: Config) -> N
     """
     ttl_days = await redis.get_topic_ttl_days()
     if ttl_days <= 0:
+        return
+
+    # Never delete topics using IDs that belong to a different group:
+    # a stale ID can collide with a live topic here and wipe it.
+    bound_group_id = await redis.get_bound_group_id()
+    if bound_group_id != config.bot.GROUP_ID:
+        logger.warning(
+            "Skipping topic cleanup: stored topics are bound to group %s, "
+            "but the bot runs in group %s",
+            bound_group_id, config.bot.GROUP_ID,
+        )
         return
 
     cutoff = int(time.time()) - ttl_days * 86400

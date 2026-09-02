@@ -144,7 +144,16 @@ class RedisStorage:
     # ------------------------------------------------------------------
 
     TOPIC_TTL_KEY = "settings:topic_autodelete_days"
+    GROUP_ID_KEY = "settings:bound_group_id"
     HISTORY_MAX = 500  # keep at most this many messages per user
+
+    async def get_bound_group_id(self) -> int | None:
+        """The group ID that the stored forum topic IDs belong to."""
+        val = await self.redis.get(self.GROUP_ID_KEY)
+        return int(val) if val else None
+
+    async def set_bound_group_id(self, group_id: int) -> None:
+        await self.redis.set(self.GROUP_ID_KEY, group_id)
 
     async def get_topic_ttl_days(self) -> int:
         val = await self.redis.get(self.TOPIC_TTL_KEY)
