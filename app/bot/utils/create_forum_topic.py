@@ -2,6 +2,7 @@ import asyncio
 import logging
 import time
 import re
+import unicodedata
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
@@ -12,6 +13,16 @@ from .redis import RedisStorage
 from .redis.models import UserData
 
 
+# Characters that count as letters for \w but render as nothing. A title built
+# only from these is non-empty for Python and empty for Telegram, which then
+# rejects the whole create_forum_topic call.
+_BLANK_CHARS = frozenset(
+    "\u115f\u1160\u3164\uffa0"  # Hangul fillers
+    "\u2800"                     # Braille pattern blank
+    "\u17b4\u17b5"               # Khmer inherent vowels
+)
+
+
 def _sanitize_topic_name(name: str) -> str:
     """
     Sanitize topic name to remove characters that Telegram doesn't accept.
@@ -20,18 +31,25 @@ def _sanitize_topic_name(name: str) -> str:
     # Remove leading/trailing whitespace
     name = name.strip()
 
+    # Drop control and format characters (zero-width spaces, RTL marks,
+    # variation selectors, BOM) — they are invisible but still count as content.
+    name = "".join(c for c in name if unicodedata.category(c) not in ("Cc", "Cf"))
+
     # Replace problematic characters with safe alternatives
     # Keep: a-z, A-Z, 0-9, space, hyphen, underscore, Cyrillic
     name = re.sub(r'[^\w\s\-а-яА-ЯёЁ]', '', name)
 
     # Collapse multiple spaces into one
-    name = re.sub(r'\s+', ' ', name)
+    name = re.sub(r'\s+', ' ', name).strip()
 
     # Truncate to 128 chars
     name = name[:128]
 
-    # If empty after sanitization, use default
-    return name or "User"
+    # If nothing visible survived sanitization, use default
+    if not any(c.isalnum() and c not in _BLANK_CHARS for c in name):
+        return "User"
+
+    return name
 
 
 def _build_topic_name(full_name: str | None, user_id: int) -> str:
@@ -131,7 +149,9 @@ async def get_or_create_forum_topic(
         try:
             # If message_thread_id is not found, create a forum topic
             name = _build_topic_name(user_data.full_name, user_data.id)
-            message_thread_id = await create_forum_topic(bot, config, name)
+            message_thread_id = await create_forum_topic(
+                bot, config, name, fallback_name=f"User {user_data.id}"[:128],
+            )
             if message_thread_id is None:
                 raise CreateForumTopicException
             user_data.message_thread_id = message_thread_id
@@ -163,6 +183,7 @@ async def create_forum_topic(
     name: str,
     retry_count: int = 0,
     use_custom_icon: bool = True,
+    fallback_name: str | None = None,
 ) -> int:
     """
     Creates a forum topic in the specified chat.
@@ -171,6 +192,7 @@ async def create_forum_topic(
     :param config: The configuration object.
     :param name: The name of the forum topic.
     :param retry_count: Internal retry counter for handling duplicate names.
+    :param fallback_name: Name to retry with if Telegram rejects the title as empty.
 
     :return: The message thread ID of the created forum topic.
     :raises NotEnoughRightsException: If the bot doesn't have enough rights to create a forum topic.
@@ -206,10 +228,15 @@ async def create_forum_topic(
         # Handle Retry-After exception (rate limiting)
         logging.warning(f"Rate limited: {ex.message}, retrying after {ex.retry_after}s")
         await asyncio.sleep(ex.retry_after)
-        return await create_forum_topic(bot, config, name, retry_count)
+        return await create_forum_topic(
+            bot, config, name, retry_count,
+            use_custom_icon=use_custom_icon,
+            fallback_name=fallback_name,
+        )
 
     except TelegramBadRequest as ex:
         error_msg = str(ex.message).lower()
+        error_code = error_msg.replace(" ", "")
 
         if "not enough rights" in error_msg:
             logging.error("Bot doesn't have enough rights to create forum topics")
@@ -230,8 +257,26 @@ async def create_forum_topic(
                     name,
                     retry_count=retry_count,
                     use_custom_icon=False,
+                    fallback_name=fallback_name,
                 )
-            raise CreateForumTopicException
+            raise CreateForumTopicException from ex
+
+        # The title renders as blank for Telegram (invisible-only display name).
+        # _sanitize_topic_name catches the known cases; this is the safety net
+        # for whatever new invisible codepoint shows up next.
+        elif "topic_title_empty" in error_code:
+            if fallback_name and display_name != fallback_name:
+                logging.warning(
+                    "Topic title %r rejected as empty, retrying as %r",
+                    display_name, fallback_name,
+                )
+                return await create_forum_topic(
+                    bot,
+                    config,
+                    fallback_name,
+                    retry_count=retry_count,
+                    use_custom_icon=use_custom_icon,
+                )
 
         # If it's a duplicate name error and we haven't retried, try with unique suffix
         elif ("topic name is already taken" in error_msg or "already exists" in error_msg):
@@ -243,11 +288,17 @@ async def create_forum_topic(
                     name,
                     retry_count + 1,
                     use_custom_icon=use_custom_icon,
+                    fallback_name=fallback_name,
                 )
 
         # Log the actual error for debugging
-        logging.error(f"Telegram error creating forum topic '{display_name}': {ex.message}")
-        raise CreateForumTopicException
+        logging.error(
+            f"Telegram error creating forum topic {display_name!r} "
+            f"(chat_id={config.bot.GROUP_ID}): {ex.message}"
+        )
+        # Chain the original error: the generic exception message otherwise
+        # reports "chat not found" for every unrecognised failure.
+        raise CreateForumTopicException from ex
 
     except Exception as ex:
         logging.error(f"Unexpected error creating forum topic: {type(ex).__name__}: {ex}")
