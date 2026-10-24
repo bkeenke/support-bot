@@ -213,6 +213,21 @@ class RedisStorage:
         sid = await self.redis.get(f"web_thread:{thread_id}")
         return sid.decode() if sid else None
 
+    async def get_all_web_session_ids(self) -> list[str]:
+        ids = []
+        async for key in self.redis.scan_iter(match="web_session:*", count=500):
+            key = key.decode() if isinstance(key, bytes) else key
+            ids.append(key.split(":", 1)[1])
+        return ids
+
+    async def get_web_last_activity(self, session_id: str) -> int | None:
+        """Timestamp of the newest inbox entry (user or support), if any."""
+        raw = await self.redis.lindex(f"web_inbox:{session_id}", -1)
+        if not raw:
+            return None
+        ts = json.loads(raw).get("ts")
+        return int(ts) if ts else None
+
     async def push_web_inbox(self, session_id: str, message: dict) -> None:
         await self.redis.rpush(f"web_inbox:{session_id}", json.dumps(message))
 
