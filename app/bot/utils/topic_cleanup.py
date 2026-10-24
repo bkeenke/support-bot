@@ -101,14 +101,77 @@ async def cleanup_old_topics(bot: Bot, redis: RedisStorage, config: Config) -> N
         logger.info("Topic cleanup finished: %s topic(s) deleted", deleted)
 
 
+async def cleanup_old_web_topics(bot: Bot, redis: RedisStorage, config: Config) -> None:
+    """
+    Delete web widget topics whose last inbox message is older than
+    WEB_TOPIC_AUTODELETE_HOURS. The conversation stays in web_inbox:{session_id},
+    so the widget keeps showing it and the next message opens a fresh topic.
+    """
+    ttl_hours = config.api.WEB_TOPIC_AUTODELETE_HOURS
+    if ttl_hours <= 0:
+        return
+
+    bound_group_id = await redis.get_bound_group_id()
+    if bound_group_id != config.bot.GROUP_ID:
+        logger.warning(
+            "Skipping web topic cleanup: stored topics are bound to group %s, "
+            "but the bot runs in group %s",
+            bound_group_id, config.bot.GROUP_ID,
+        )
+        return
+
+    cutoff = int(time.time()) - ttl_hours * 3600
+    deleted = 0
+
+    for session_id in await redis.get_all_web_session_ids():
+        session = await redis.get_web_session(session_id)
+        if not session or session.thread_id is None:
+            continue
+
+        last_activity = await redis.get_web_last_activity(session_id)
+        if last_activity is None:
+            # Topic exists but the inbox is empty: start counting from now.
+            seed_key = f"web_activity:{session_id}"
+            seeded = await redis.redis.get(seed_key)
+            if seeded is None:
+                await redis.redis.set(seed_key, int(time.time()))
+                continue
+            last_activity = int(seeded)
+
+        if last_activity > cutoff:
+            continue
+
+        thread_id = session.thread_id
+        if not await _delete_topic(bot, config, thread_id):
+            continue
+
+        session.thread_id = None
+        await redis.update_web_session(session)
+        await redis.redis.delete(
+            f"web_thread:{thread_id}",
+            f"topic_valid:{thread_id}",
+            f"web_activity:{session_id}",
+        )
+        deleted += 1
+        logger.info(
+            "Auto-deleted web topic %s (session=%s, inactive > %s h)",
+            thread_id, session_id, ttl_hours,
+        )
+        await asyncio.sleep(1)
+
+    if deleted:
+        logger.info("Web topic cleanup finished: %s topic(s) deleted", deleted)
+
+
 async def topic_cleanup_loop(bot: Bot, redis: RedisStorage, config: Config) -> None:
-    """Background task: periodically run the topic cleanup sweep."""
+    """Background task: periodically run the topic cleanup sweeps."""
     await asyncio.sleep(STARTUP_DELAY)
     while True:
-        try:
-            await cleanup_old_topics(bot, redis, config)
-        except asyncio.CancelledError:
-            raise
-        except Exception as ex:
-            logger.exception("Topic cleanup sweep failed: %s", ex)
+        for sweep in (cleanup_old_topics, cleanup_old_web_topics):
+            try:
+                await sweep(bot, redis, config)
+            except asyncio.CancelledError:
+                raise
+            except Exception as ex:
+                logger.exception("Topic cleanup sweep %s failed: %s", sweep.__name__, ex)
         await asyncio.sleep(CLEANUP_INTERVAL)

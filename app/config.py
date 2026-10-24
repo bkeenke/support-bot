@@ -13,6 +13,7 @@ class ApiConfig:
     READ_WEBHOOK_URL: str | None
     READ_WEBHOOK_DELAY: int
     API_SECRET_KEY: str | None
+    WEB_TOPIC_AUTODELETE_HOURS: int
 
 
 @dataclass
@@ -112,6 +113,7 @@ def load_config() -> Config:
             READ_WEBHOOK_URL=env.str("READ_WEBHOOK_URL", default=None) or None,
             READ_WEBHOOK_DELAY=env.int("READ_WEBHOOK_DELAY", default=30),
             API_SECRET_KEY=env.str("API_SECRET_KEY", default=None) or None,
+            WEB_TOPIC_AUTODELETE_HOURS=env.int("WEB_TOPIC_AUTODELETE_HOURS", default=0),
         ),
         proxy=env.str("PROXY_URL", default=None) or None,
         faq_ru_url=env.str("FAQ_TEXT_URL", default=None) or None,
